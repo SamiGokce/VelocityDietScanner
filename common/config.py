@@ -87,6 +87,7 @@ class Sourcing:
     max_retries: int
     sparql_endpoint: str
     require_english_article: bool
+    detail_pool: int
 
 
 @dataclass(frozen=True)
@@ -243,6 +244,7 @@ def load_config(path: str | os.PathLike[str] | None = None) -> Config:
             max_retries=int(s.get("max_retries", 5)),
             sparql_endpoint=str(s.get("sparql_endpoint", "https://query.wikidata.org/sparql")),
             require_english_article=bool(s.get("require_english_article", True)),
+            detail_pool=int(s.get("detail_pool", 45)),
         ),
         render=RenderCfg(
             width=int(r.get("width", 1080)),

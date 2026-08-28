@@ -24,7 +24,8 @@ sourcing:
   user_agent: "BirthdayContentBot/1.0 (https://github.com/SamiGokce/VelocityDietScanner; ${CONTACT_EMAIL:-you@example.com})"
   sparql_endpoint: https://query.wikidata.org/sparql
   min_sitelinks: 40        # fame proxy: Wikipedia editions linking the person
-  candidate_limit: 250     # max rows per day from the SPARQL query
+  candidate_limit: 250     # max rows per day from the candidate SPARQL query
+  detail_pool: 45          # how many of those get the (cheap) detail query
   pageviews_days: 90       # trailing window for the pageviews ranking
   request_delay_seconds: 1.0
   max_retries: 5

@@ -80,12 +80,17 @@ python -m upload.upload_daily --limit 3
 
 For each of the 90 days:
 
-1. **Query Wikidata** (`scripts/wikidata.py`) for humans born on that month/day
-   with day-level date precision, holding one of 67 eligible occupations, and
-   with at least `sourcing.min_sitelinks` Wikipedia editions — or on your
-   curated list. Anyone carrying *any* death-implying statement (P570 including
-   deprecated statements, place/cause/manner of death, place of burial) is
-   excluded at query time.
+1. **Query Wikidata** (`scripts/wikidata.py`), in two passes. The *candidate*
+   query asks only for Q-ids and sitelink counts of humans born on that
+   month/day with day-level date precision and at least
+   `sourcing.min_sitelinks` Wikipedia editions; anyone carrying *any*
+   death-implying statement (P570 including deprecated statements,
+   place/cause/manner of death, place of burial) is excluded there. The
+   *detail* query then fetches labels, photos, articles and occupations for the
+   top `sourcing.detail_pool` of them plus your curated list, with the subjects
+   bound up front so it stays cheap. Splitting it this way is what keeps the
+   day inside the query service's 60-second budget — one combined query that
+   also joins 67 occupation values does not fit, and times out.
 2. **Rank** (`scripts/pageviews.py`) the shortlist by average daily English
    Wikipedia pageviews over a trailing window, with a small bounded bonus for
    sitelink count so someone globally famous but quiet this month is not buried.
@@ -115,9 +120,10 @@ in below the sitelink threshold. They are considered before the ranked pool.
 
 The public query service enforces a 60-second budget and occasionally goes into
 "1 request per minute" mode during an outage. The client handles this: it honours
-`Retry-After`, backs off exponentially, splits the query into occupation chunks
-on timeout, and caches every day's raw result under `output/cache/sparql/` so a
-re-run costs nothing. A full 90-day fetch is a long job — run it once, overnight
+`Retry-After`, backs off exponentially, retries the candidate query in
+birth-year bands if it times out (their union is the same set of people), and
+caches every day's raw result under `output/cache/sparql/` so a re-run costs
+nothing. A full 90-day fetch is a long job — run it once, overnight
 if need be. If the service is down for a while you can point
 `sourcing.sparql_endpoint` at a mirror (e.g. `https://qlever.cs.uni-freiburg.de/api/wikidata`);
 the query declares its own prefixes so it is portable.
@@ -231,6 +237,8 @@ environment or a local `.env`. The settings worth knowing:
 | `schedule.per_day_min` / `per_day_max` | 3–5 people per day; short days are logged |
 | `sourcing.user_agent` | **put a real contact address here** — Wikimedia throttles anonymous bots |
 | `sourcing.min_sitelinks` | fame threshold; lower = more people, more obscure |
+| `sourcing.detail_pool` | how many of a day's candidates get the detail query |
+| `sourcing.sparql_endpoint` | swap in a mirror when the public service is degraded |
 | `sourcing.allowed_licenses` | narrow to `[cc0, public-domain]` to go credit-free |
 | `render.vignette_start` / `vignette_opacity` | where the gradient starts, and how dark it gets |
 | `render.name_max_size` / `small_size` | the type hierarchy (name ≈ 3.5× the small lines) |
@@ -248,9 +256,9 @@ environment or a local `.env`. The settings worth knowing:
 python -c "import json;[print(e['reason'], '-', e.get('name'), '-', e.get('detail','')[:80]) for e in map(json.loads, open('data/review_log.jsonl'))]"
 ```
 
-Reasons: `no_p18_image_claim`, `no_open_licensed_image`, `alive_status_mismatch`,
-`alive_status_unverified`, `notability_below_threshold`, `not_selected_for_day`,
-`render_failed`, `upload_failed`, `day_underfilled`.
+Reasons: `no_p18_image_claim`, `no_open_licensed_image`, `no_english_wikipedia_article`,
+`alive_status_mismatch`, `alive_status_unverified`, `notability_below_threshold`,
+`not_selected_for_day`, `render_failed`, `upload_failed`, `day_underfilled`.
 
 `alive_status_mismatch` is the one to read every time — it means Wikidata and
 Wikipedia disagree about whether someone is alive.
@@ -263,7 +271,7 @@ Wikipedia disagree about whether someone is alive.
 pytest -q
 ```
 
-115 tests, no network required. The ones that matter most:
+138 tests, no network required. The ones that matter most:
 `test_ordinals.py` (every age 1–122), `test_alive_check.py`,
 `test_overlay_text.py` (captures every string drawn on a frame),
 `test_licensing.py`, `test_upload_metadata.py` (the credit is always present).

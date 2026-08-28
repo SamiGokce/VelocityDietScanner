@@ -20,7 +20,7 @@ ALIVE_MISMATCH = "alive_status_mismatch"
 ALIVE_UNVERIFIED = "alive_status_unverified"
 BELOW_THRESHOLD = "notability_below_threshold"
 NOT_SELECTED = "not_selected_for_day"
-NO_BIRTH_PRECISION = "birth_date_precision_too_coarse"
+NO_ENGLISH_ARTICLE = "no_english_wikipedia_article"
 RENDER_FAILED = "render_failed"
 UPLOAD_FAILED = "upload_failed"
 

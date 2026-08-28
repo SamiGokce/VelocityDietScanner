@@ -30,8 +30,9 @@ from common.db import (ALIVE_YES, GRAPHIC_NEEDS_REVIEW, GRAPHIC_PENDING,
                        Database, Person)
 from common.http import PoliteSession, WikimediaError
 from common.review_log import (ALIVE_MISMATCH, ALIVE_UNVERIFIED, BELOW_THRESHOLD,
-                               IMAGE_FETCH_FAILED, NO_IMAGE_CLAIM,
-                               NO_OPEN_LICENSE, NOT_SELECTED, ReviewLog)
+                               IMAGE_FETCH_FAILED, NO_ENGLISH_ARTICLE,
+                               NO_IMAGE_CLAIM, NO_OPEN_LICENSE, NOT_SELECTED,
+                               ReviewLog)
 from scripts.alive_check import AliveChecker
 from scripts.commons import CommonsClient, LicenseRejected
 from scripts.pageviews import PageviewsClient, notability_score
@@ -60,6 +61,7 @@ class BirthdayFetcher:
         self.wikidata = WikidataClient(
             self.session, config.sourcing.sparql_endpoint,
             cache_dir=config.paths.image_cache_dir.parent / "sparql",
+            detail_pool=config.sourcing.detail_pool,
         )
         self.commons = CommonsClient(self.session, config.sourcing.allowed_licenses)
         self.pageviews = PageviewsClient(self.session)
@@ -154,6 +156,14 @@ class BirthdayFetcher:
         with a non-'yes' alive_verified when they need a human to look.
         """
         iso = day.isoformat()
+        if self.cfg.sourcing.require_english_article and not cand.wikipedia_title:
+            # No article means no pageview ranking and, more importantly, no
+            # second source for the alive check -- so they could never be used.
+            self.review.record(
+                NO_ENGLISH_ARTICLE, name=cand.full_name, wikidata_id=cand.wikidata_id,
+                target_date=iso, detail="no English Wikipedia article to verify against",
+            )
+            return None
         if not cand.image_filename:
             self.review.record(
                 NO_IMAGE_CLAIM, name=cand.full_name, wikidata_id=cand.wikidata_id,
