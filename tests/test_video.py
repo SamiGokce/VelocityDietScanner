@@ -53,3 +53,30 @@ def test_ffmpeg_command_shape():
 def test_duration_stays_in_the_shorts_range():
     cfg = load_config()
     assert 15 <= cfg.video.duration_seconds <= 30
+
+
+def test_overlay_is_composited_after_the_zoom_not_before():
+    """The type must not be part of the Ken Burns move, or it drifts off-frame."""
+    command = build_command(
+        "ffmpeg", Path("photo.png"), Path("music.mp3"), Path("out.mp4"),
+        duration=20, fps=30, zoom=1.12, crf=20, preset="medium",
+        width=1080, height=1920, fade_in=1.0, fade_out=2.0,
+        overlay=Path("type.png"),
+    )
+    graph = command[command.index("-filter_complex") + 1]
+    assert "type.png" in " ".join(command)
+    assert graph.index("zoompan") < graph.index("overlay=0:0"), \
+        "zoompan must run on the photo before the type is laid over it"
+    # the audio input shifts to index 2 once there are two image inputs
+    assert "[2:a]" in graph
+
+
+def test_without_an_overlay_the_whole_frame_zooms():
+    command = build_command(
+        "ffmpeg", Path("frame.png"), Path("music.mp3"), Path("out.mp4"),
+        duration=20, fps=30, zoom=1.12, crf=20, preset="medium",
+        width=1080, height=1920, fade_in=1.0, fade_out=2.0,
+    )
+    graph = command[command.index("-filter_complex") + 1]
+    assert "overlay=" not in graph
+    assert "[1:a]" in graph

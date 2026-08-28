@@ -137,8 +137,12 @@ the query declares its own prefixes so it is portable.
   `HAPPY 57TH BIRTHDAY` / **JACK BLACK** / `1969 – PRESENT`.
   The name auto-fits between `name_max_size` and `name_min_size` and wraps to a
   second line only when it must.
-- Video: ffmpeg `zoompan` over a 2× oversampled frame for a smooth slow push-in,
-  muxed with your audio track (looped and faded), H.264 + AAC, `+faststart`.
+- Video: the frame is rendered as two layers — the photo, and an RGBA layer
+  holding the vignette and the type. ffmpeg `zoompan`s the photo (over a 2×
+  oversampled copy, so the push-in is smooth rather than stepped) and composites
+  the type on top unmoved. Burning the words into the zoomed layer instead would
+  scale them up over the shot and push the ends of the lines off the edges.
+  Audio is looped to length and faded; output is H.264 + AAC with `+faststart`.
 
 Rendering is decoupled from uploading and per-row: one bad photo marks that row
 `Failed` with a note and the batch continues.

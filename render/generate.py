@@ -16,7 +16,6 @@ import argparse
 import hashlib
 import logging
 import sys
-import urllib.parse
 from datetime import date
 from pathlib import Path
 
@@ -27,7 +26,7 @@ from common.dates import date_range
 from common.db import (GRAPHIC_FAILED, GRAPHIC_PENDING, GRAPHIC_READY, Database)
 from common.http import PoliteSession, WikimediaError
 from common.review_log import RENDER_FAILED, ReviewLog
-from render.graphic import RenderError, render_to_file
+from render.graphic import RenderError, render_layers_to_files, render_to_file
 from render.video import VideoError, render_video
 
 log = logging.getLogger("render")
@@ -116,8 +115,20 @@ class Renderer:
 
             video_path = None
             if self.make_video:
+                # The photo layer is zoomed; the type layer is held still on
+                # top of it, so a Ken Burns push never drags the words about.
+                layer_dir = self.cfg.paths.image_cache_dir / "layers"
+                background, overlay = render_layers_to_files(
+                    photo_path,
+                    layer_dir / f"{stem}_photo.png",
+                    layer_dir / f"{stem}_type.png",
+                    full_name=name,
+                    age_turning=int(row["age_turning"]),
+                    birth_year=int(row["birth_year"]),
+                    cfg=self.cfg.render,
+                )
                 video_path = self.cfg.paths.videos_dir / f"{stem}.mp4"
-                render_video(graphic_path, video_path, self.cfg)
+                render_video(background, video_path, self.cfg, overlay_path=overlay)
 
             db.update(
                 person_id,

@@ -1,7 +1,5 @@
 """Upload metadata -- above all, that the photo credit is always in the description."""
 
-import sqlite3
-
 import pytest
 
 from common.config import ConfigError, load_config

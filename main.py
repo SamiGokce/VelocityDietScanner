@@ -19,7 +19,6 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from datetime import date
 from pathlib import Path
 
 from common.config import load_config

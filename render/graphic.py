@@ -9,6 +9,11 @@ Deliberate properties, all of them spec requirements:
   * the only text is HAPPY {n}TH BIRTHDAY / NAME / {YEAR} - PRESENT.  No
     credit line, no watermark, no attribution -- that lives in the YouTube
     description.
+
+The frame is built in two layers: the treated photo, and an RGBA overlay
+holding the vignette and the type.  Composited, they are the still.  Kept
+apart, the video can zoom the photo while the type stays fixed -- otherwise a
+Ken Burns push scales the words with the picture and pulls them off the edges.
 """
 
 from __future__ import annotations
@@ -91,6 +96,14 @@ def vignette_mask(width: int, height: int, start: float, opacity: float) -> Imag
     return column.resize((width, height), Image.BILINEAR)
 
 
+def vignette_layer(cfg: RenderCfg) -> Image.Image:
+    """The gradient on its own, as transparent-to-black RGBA."""
+    mask = vignette_mask(cfg.width, cfg.height, cfg.vignette_start, cfg.vignette_opacity)
+    layer = Image.new("RGBA", (cfg.width, cfg.height), (0, 0, 0, 0))
+    layer.putalpha(mask)
+    return layer
+
+
 def apply_vignette(image: Image.Image, cfg: RenderCfg) -> Image.Image:
     mask = vignette_mask(image.width, image.height, cfg.vignette_start, cfg.vignette_opacity)
     shade = Image.new("RGB", image.size, (0, 0, 0))
@@ -140,9 +153,10 @@ def layout_block(text: OverlayText, cfg: RenderCfg, max_width: float) -> Block:
     return Block(cfg.small_size, size, name_lines, height)
 
 
-def draw_overlay(canvas: Image.Image, text: OverlayText, cfg: RenderCfg) -> Image.Image:
-    """Draw the three lines with a soft drop shadow, in the bottom third."""
-    max_width = canvas.width - 2 * cfg.side_margin
+def text_layer(text: OverlayText, cfg: RenderCfg) -> Image.Image:
+    """The three lines and their drop shadow, on transparency."""
+    size = (cfg.width, cfg.height)
+    max_width = cfg.width - 2 * cfg.side_margin
     block = layout_block(text, cfg, max_width)
 
     small_font = load_font(str(cfg.font_small), block.top_font_size, cfg.font_small_variation)
@@ -151,15 +165,15 @@ def draw_overlay(canvas: Image.Image, text: OverlayText, cfg: RenderCfg) -> Imag
     name_tracking = tracking_px(name_font, cfg.tracking_name)
     name_line_h = int(line_height(name_font) * 1.02)
 
-    bottom = canvas.height - cfg.block_bottom_margin
+    bottom = cfg.height - cfg.block_bottom_margin
     y = bottom - block.height
-    lowest_allowed_top = int(canvas.height * 2 / 3) - line_height(small_font)
+    lowest_allowed_top = int(cfg.height * 2 / 3) - line_height(small_font)
     if y < lowest_allowed_top:
         log.debug("text block is taller than the bottom third (top at y=%d)", y)
 
-    layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    layer = Image.new("RGBA", size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
-    centre_x = canvas.width / 2
+    centre_x = cfg.width / 2
 
     draw_tracked(draw, (centre_x, y), text.top, small_font, small_tracking, WHITE)
     y += line_height(small_font) + cfg.gap_above_name
@@ -169,29 +183,42 @@ def draw_overlay(canvas: Image.Image, text: OverlayText, cfg: RenderCfg) -> Imag
     y += cfg.gap_below_name
     draw_tracked(draw, (centre_x, y), text.bottom, small_font, small_tracking, WHITE)
 
-    shadow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    shadow = Image.new("RGBA", size, (0, 0, 0, 0))
     alpha = layer.getchannel("A").filter(ImageFilter.GaussianBlur(cfg.shadow_blur))
     alpha = alpha.point(lambda v: int(v * cfg.shadow_opacity))
     shadow.putalpha(alpha)
     shadow = shadow.transform(
         shadow.size, Image.AFFINE, (1, 0, -cfg.shadow_offset, 0, 1, -cfg.shadow_offset)
     )
+    return Image.alpha_composite(shadow, layer)
 
-    out = canvas.convert("RGBA")
-    out = Image.alpha_composite(out, shadow)
-    out = Image.alpha_composite(out, layer)
-    return out.convert("RGB")
+
+def overlay_layer(text: OverlayText, cfg: RenderCfg) -> Image.Image:
+    """Vignette + type: everything that must stay still while the photo moves."""
+    return Image.alpha_composite(vignette_layer(cfg), text_layer(text, cfg))
+
+
+def draw_overlay(canvas: Image.Image, text: OverlayText, cfg: RenderCfg) -> Image.Image:
+    """Composite the type (and its shadow) onto an already-vignetted canvas."""
+    return Image.alpha_composite(
+        canvas.convert("RGBA"), text_layer(text, cfg)
+    ).convert("RGB")
 
 
 # --- the whole frame -------------------------------------------------------
 
+def render_photo_layer(photo: Image.Image, cfg: RenderCfg) -> Image.Image:
+    """The treated photo alone: cropped to fill the canvas, black and white."""
+    return to_black_and_white(cover_crop(photo, cfg.width, cfg.height, cfg.crop_anchor_y), cfg)
+
+
 def render_frame(photo: Image.Image, full_name: str, age_turning: int,
                  birth_year: int, cfg: RenderCfg) -> Image.Image:
     text = overlay_lines(full_name, age_turning, birth_year)
-    canvas = cover_crop(photo, cfg.width, cfg.height, cfg.crop_anchor_y)
-    canvas = to_black_and_white(canvas, cfg)
-    canvas = apply_vignette(canvas, cfg)
-    return draw_overlay(canvas, text, cfg)
+    background = render_photo_layer(photo, cfg)
+    return Image.alpha_composite(
+        background.convert("RGBA"), overlay_layer(text, cfg)
+    ).convert("RGB")
 
 
 def render_to_file(photo_path: str | Path, destination: str | Path, full_name: str,
@@ -205,3 +232,24 @@ def render_to_file(photo_path: str | Path, destination: str | Path, full_name: s
         frame = render_frame(photo, full_name, age_turning, birth_year, cfg)
     frame.save(destination, format="PNG", optimize=True)
     return destination
+
+
+def render_layers_to_files(photo_path: str | Path, background_path: str | Path,
+                           overlay_path: str | Path, full_name: str, age_turning: int,
+                           birth_year: int, cfg: RenderCfg) -> tuple[Path, Path]:
+    """Write the two video layers: the photo to be zoomed, and the fixed type.
+
+    The composited result is pixel-identical to `render_to_file`; splitting it
+    only lets ffmpeg animate the photo without dragging the words along.
+    """
+    background_path, overlay_path = Path(background_path), Path(overlay_path)
+    for path in (background_path, overlay_path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    with Image.open(photo_path) as photo:
+        photo.load()
+        if photo.mode != "RGB":
+            photo = photo.convert("RGB")
+        render_photo_layer(photo, cfg).save(background_path, format="PNG")
+    text = overlay_lines(full_name, age_turning, birth_year)
+    overlay_layer(text, cfg).save(overlay_path, format="PNG")
+    return background_path, overlay_path
