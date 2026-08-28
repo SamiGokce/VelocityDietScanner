@@ -23,6 +23,7 @@ by a test.
 | Rule | Where it is enforced |
 | --- | --- |
 | Only CC0 / public-domain / CC BY / CC BY-SA images from Wikimedia Commons. Unknown or NC/ND licences are **rejected**, never assumed. | `scripts/commons.py`, `tests/test_licensing.py` |
+| No pixelated photos: anything needing more than `max_upscale` enlargement to fill the frame is skipped during sourcing. | `scripts/commons.py`, `tests/test_image_quality.py` |
 | Attribution is **required** for CC BY / CC BY-SA — and appears **only in the YouTube description**, never on the frame. | `upload/upload_daily.py` refuses a description template without `{attribution}`; `tests/test_overlay_text.py` captures every string the renderer draws |
 | No commercial music. `video.audio_track_path` must be a track you supply; empty means a loud failure, never a fallback. | `common/config.py:require_audio_track`, `tests/test_video.py` |
 | Open fonts only (Cinzel / Cormorant / Playfair Display), never Trajan. | `scripts/get_fonts.py`, `config.yaml` |
@@ -94,10 +95,53 @@ For each of the 90 days:
 2. **Rank** (`scripts/pageviews.py`) the shortlist by average daily English
    Wikipedia pageviews over a trailing window, with a small bounded bonus for
    sitelink count so someone globally famous but quiet this month is not buried.
-3. **Verify** each candidate in rank order: an openly licensed Commons photo
-   (`scripts/commons.py`) *and* an independent alive check against English
-   Wikipedia (`scripts/alive_check.py`). The first 3–5 who pass are the day's
-   selection; everyone else is written to the review log with a reason.
+3. **Verify** each candidate in rank order: an openly licensed, *high enough
+   resolution* Commons photo (`scripts/commons.py`) *and* an independent alive
+   check against English Wikipedia (`scripts/alive_check.py`). The first 3–5 who
+   pass are the day's selection; everyone else is written to the review log with
+   a reason. The whole shortlist's photo metadata is fetched in one batched
+   Commons request rather than one call per person.
+
+### Photo quality
+
+Commons' P18 images are bimodal. A measured sample of one day's twenty
+candidates: five were 2300–2700px press photos, seven were middling
+(1000–1500px), and the rest were thumbnails — the smallest was 149×224. Filling
+a 1080×1920 frame from the bottom of that range means inventing 90% of the
+pixels, which is exactly the mush you don't want.
+
+So resolution is a **sourcing** filter, not a render-time one. The test is not
+raw pixel count but `max_upscale` — how much the photo must be enlarged to
+cover the frame after cropping to 9:16:
+
+```
+upscale = max(1080 / width, 1920 / height)
+```
+
+A 4000×1200 panorama has more pixels than the canvas and still fails, because
+only 1200px of height are available for a 1920px-tall frame. Rejecting a soft
+photo during sourcing means the next-ranked person takes the slot, so the day
+still fills; rejecting it at render time would leave the day short.
+
+Measured pass rates on that same twenty-candidate pool:
+
+| `max_upscale` | candidates passing | look |
+| --- | --- | --- |
+| 1.00 | 30% | never enlarged at all — strictest |
+| **1.25** (default) | **45%** | slight enlargement, still crisp |
+| 1.40 | 55% | softness becomes visible on faces |
+| 2.00 | 70% | visibly pixelated photos get through |
+
+With a 45-candidate detail pool per day, 45% is a comfortable margin over the
+3–5 slots. Raise `max_upscale` only if days start coming up short — the review
+log tells you (`image_resolution_too_low`), and `min_image_width` /
+`min_image_height` are an absolute floor underneath it.
+
+Downloads then ask Commons for *exactly* enough pixels, computed from the
+original's stored dimensions — a fixed thumbnail width throws away detail on
+landscape sources, where height is the binding constraint — and the video's
+photo layer is rendered at `render.supersample` (2× = 2160×3840) so the Ken
+Burns push reveals real detail instead of enlarging a downsampled frame.
 
 Rows land in SQLite (`data/birthdays.sqlite3`) with the columns the spec asks
 for — `full_name, birthday, birth_year, age_turning, category, image_url,
@@ -238,6 +282,9 @@ environment or a local `.env`. The settings worth knowing:
 | `sourcing.user_agent` | **put a real contact address here** — Wikimedia throttles anonymous bots |
 | `sourcing.min_sitelinks` | fame threshold; lower = more people, more obscure |
 | `sourcing.detail_pool` | how many of a day's candidates get the detail query |
+| `sourcing.max_upscale` | photo-quality gate; 1.0 never enlarges, 1.25 is the default |
+| `sourcing.min_image_width` / `min_image_height` | absolute resolution floor |
+| `render.supersample` | render the video's photo layer above canvas size (2×) |
 | `sourcing.sparql_endpoint` | swap in a mirror when the public service is degraded |
 | `sourcing.allowed_licenses` | narrow to `[cc0, public-domain]` to go credit-free |
 | `render.vignette_start` / `vignette_opacity` | where the gradient starts, and how dark it gets |
@@ -256,7 +303,8 @@ environment or a local `.env`. The settings worth knowing:
 python -c "import json;[print(e['reason'], '-', e.get('name'), '-', e.get('detail','')[:80]) for e in map(json.loads, open('data/review_log.jsonl'))]"
 ```
 
-Reasons: `no_p18_image_claim`, `no_open_licensed_image`, `no_english_wikipedia_article`,
+Reasons: `no_p18_image_claim`, `no_open_licensed_image`, `image_resolution_too_low`,
+`no_english_wikipedia_article`,
 `alive_status_mismatch`, `alive_status_unverified`, `notability_below_threshold`,
 `not_selected_for_day`, `render_failed`, `upload_failed`, `day_underfilled`.
 
@@ -271,10 +319,11 @@ Wikipedia disagree about whether someone is alive.
 pytest -q
 ```
 
-144 tests, no network required. The ones that matter most:
+165 tests, no network required. The ones that matter most:
 `test_ordinals.py` (every age 1–122), `test_alive_check.py`,
 `test_overlay_text.py` (captures every string drawn on a frame),
-`test_licensing.py`, `test_upload_metadata.py` (the credit is always present).
+`test_licensing.py`, `test_image_quality.py` (the resolution gate),
+`test_upload_metadata.py` (the credit is always present).
 
 ---
 

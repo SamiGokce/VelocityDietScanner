@@ -43,12 +43,15 @@ def ensure_ffmpeg(binary: str = "ffmpeg") -> str:
 def build_command(ffmpeg: str, frame: Path, audio: Path, destination: Path,
                   *, duration: float, fps: int, zoom: float, crf: int, preset: str,
                   width: int, height: int, fade_in: float, fade_out: float,
-                  overlay: Path | None = None) -> list[str]:
+                  overlay: Path | None = None, supersample: int = 2) -> list[str]:
     """Assemble the ffmpeg invocation (separated out so tests can inspect it)."""
     total_frames = max(1, int(round(duration * fps)))
-    # zoompan works on the scaled-up still: oversampling first keeps the slow
-    # push-in smooth instead of stepping pixel by pixel.
-    over_w, over_h = width * 2, height * 2
+    # zoompan works on a supersampled frame: oversampling keeps the slow
+    # push-in smooth instead of stepping pixel by pixel.  When the photo layer
+    # was already rendered at this size (the normal case) the scale is a no-op
+    # and no detail is thrown away and re-invented.
+    factor = max(1, int(supersample))
+    over_w, over_h = width * factor, height * factor
     zoom_step = (max(1.0001, zoom) - 1.0) / total_frames
     fade_out_start = max(0.0, duration - max(0.1, fade_out))
     zoom_chain = (
@@ -121,6 +124,7 @@ def render_video(frame_path: str | Path, destination: str | Path, cfg: Config,
         fade_in=cfg.video.audio_fade_in,
         fade_out=cfg.video.audio_fade_out,
         overlay=overlay,
+        supersample=cfg.render.supersample,
     )
     log.debug("ffmpeg: %s", " ".join(command))
     result = subprocess.run(command, capture_output=True, text=True)

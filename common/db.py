@@ -13,6 +13,7 @@ that makes reruns cheap and failures debuggable.
 from __future__ import annotations
 
 import csv
+import logging
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass, asdict
@@ -35,6 +36,8 @@ ALIVE_MISMATCH = "mismatch"
 ALIVE_UNVERIFIED = "unverified"
 
 # The column set the spec asks for, in spec order -- used for CSV export.
+log = logging.getLogger(__name__)
+
 SPEC_COLUMNS = (
     "full_name", "birthday", "birth_year", "age_turning", "category",
     "image_url", "image_license", "image_attribution", "alive_verified",
@@ -89,6 +92,8 @@ class Person:
     category: str
     image_url: str | None = None
     image_file_page: str | None = None
+    image_width: int = 0
+    image_height: int = 0
     image_license: str | None = None
     image_attribution: str | None = None
     alive_verified: str = ALIVE_UNVERIFIED
@@ -118,7 +123,25 @@ class Database:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after a database was first created.
+
+        CREATE TABLE IF NOT EXISTS leaves an existing table untouched, so a
+        database built by an earlier version would otherwise be missing newer
+        columns and every insert would fail.
+        """
+        existing = {row[1] for row in self.conn.execute("PRAGMA table_info(people)")}
+        added = [
+            ("image_width", "INTEGER DEFAULT 0"),
+            ("image_height", "INTEGER DEFAULT 0"),
+        ]
+        for column, definition in added:
+            if column not in existing:
+                self.conn.execute(f"ALTER TABLE people ADD COLUMN {column} {definition}")
+                log.info("migrated database: added people.%s", column)
 
     # -- lifecycle ----------------------------------------------------------
     def close(self) -> None:

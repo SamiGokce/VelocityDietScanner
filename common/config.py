@@ -88,6 +88,9 @@ class Sourcing:
     sparql_endpoint: str
     require_english_article: bool
     detail_pool: int
+    min_image_width: int
+    min_image_height: int
+    max_upscale: float
 
 
 @dataclass(frozen=True)
@@ -98,6 +101,7 @@ class RenderCfg:
     contrast: float
     brightness: float
     sharpen: bool
+    supersample: int
     vignette_start: float
     vignette_opacity: float
     font_display: Path
@@ -245,6 +249,9 @@ def load_config(path: str | os.PathLike[str] | None = None) -> Config:
             sparql_endpoint=str(s.get("sparql_endpoint", "https://query.wikidata.org/sparql")),
             require_english_article=bool(s.get("require_english_article", True)),
             detail_pool=int(s.get("detail_pool", 45)),
+            min_image_width=int(s.get("min_image_width", 1000)),
+            min_image_height=int(s.get("min_image_height", 1200)),
+            max_upscale=float(s.get("max_upscale", 1.25)),
         ),
         render=RenderCfg(
             width=int(r.get("width", 1080)),
@@ -253,6 +260,7 @@ def load_config(path: str | os.PathLike[str] | None = None) -> Config:
             contrast=float(r.get("contrast", 1.20)),
             brightness=float(r.get("brightness", 1.0)),
             sharpen=bool(r.get("sharpen", True)),
+            supersample=max(1, int(r.get("supersample", 2))),
             vignette_start=vignette_start,
             vignette_opacity=vignette_opacity,
             font_display=_resolve(fonts.get("display", "assets/fonts/Cinzel[wght].ttf")),

@@ -30,11 +30,12 @@ from common.db import (ALIVE_YES, GRAPHIC_NEEDS_REVIEW, GRAPHIC_PENDING,
                        Database, Person)
 from common.http import PoliteSession, WikimediaError
 from common.review_log import (ALIVE_MISMATCH, ALIVE_UNVERIFIED, BELOW_THRESHOLD,
-                               IMAGE_FETCH_FAILED, NO_ENGLISH_ARTICLE,
-                               NO_IMAGE_CLAIM, NO_OPEN_LICENSE, NOT_SELECTED,
-                               ReviewLog)
+                               IMAGE_FETCH_FAILED, LOW_RESOLUTION,
+                               NO_ENGLISH_ARTICLE, NO_IMAGE_CLAIM,
+                               NO_OPEN_LICENSE, NOT_SELECTED, ReviewLog)
 from scripts.alive_check import AliveChecker
-from scripts.commons import CommonsClient, LicenseRejected
+from scripts.commons import (CommonsClient, ImageTooSmall, LicenseRejected,
+                             upscale_factor)
 from scripts.pageviews import PageviewsClient, notability_score
 from scripts.wikidata import Candidate, WikidataClient, load_curated_list
 
@@ -49,6 +50,7 @@ class BirthdayFetcher:
     def __init__(self, config: Config, refresh: bool = False,
                  shortlist_size: int = DEFAULT_SHORTLIST, write: bool = True) -> None:
         self.cfg = config
+        self._images: dict = {}
         self.refresh = refresh
         self.shortlist_size = shortlist_size
         self.write = write
@@ -63,7 +65,14 @@ class BirthdayFetcher:
             cache_dir=config.paths.image_cache_dir.parent / "sparql",
             detail_pool=config.sourcing.detail_pool,
         )
-        self.commons = CommonsClient(self.session, config.sourcing.allowed_licenses)
+        self.commons = CommonsClient(
+            self.session,
+            config.sourcing.allowed_licenses,
+            canvas=(config.render.width, config.render.height),
+            min_width=config.sourcing.min_image_width,
+            min_height=config.sourcing.min_image_height,
+            max_upscale=config.sourcing.max_upscale,
+        )
         self.pageviews = PageviewsClient(self.session)
         self.alive = AliveChecker(self.session)
         self.review = ReviewLog(config.paths.review_log)
@@ -114,6 +123,18 @@ class BirthdayFetcher:
             shortlist, key=lambda c: (not c.curated, -c.notability_score, -c.sitelinks)
         )
 
+        # One batched Commons request for the whole shortlist rather than one
+        # per person: Wikimedia throttles hard, and most of these photos are
+        # checked only to be rejected on licence or resolution.
+        self._images = {}
+        filenames = [c.image_filename for c in ranked if c.image_filename]
+        if filenames:
+            try:
+                self._images = self.commons.image_info_batch(filenames)
+            except WikimediaError as exc:
+                log.error("%s: Commons batch lookup failed: %s", iso, exc)
+                self._images = {}
+
         accepted: list[Person] = []
         for cand in ranked:
             if len(accepted) >= self.cfg.schedule.per_day_max:
@@ -144,6 +165,20 @@ class BirthdayFetcher:
             log.info("%s: accepted %d people", iso, len(accepted))
         return accepted
 
+    def _image_for(self, cand: Candidate):
+        """The prefetched Commons result, falling back to a single lookup."""
+        from scripts.commons import _normalise
+
+        key = _normalise(cand.image_filename or "")
+        if key in getattr(self, "_images", {}):
+            return self._images[key]
+        try:
+            return self.commons.image_info(cand.image_filename)
+        except (LicenseRejected, ImageTooSmall) as exc:
+            return exc
+        except (WikimediaError, KeyError):
+            return None
+
     def _shortlist(self, candidates: list[Candidate]) -> tuple[list[Candidate], list[Candidate]]:
         ordered = sorted(candidates, key=lambda c: (not c.curated, -c.sitelinks))
         return ordered[:self.shortlist_size], ordered[self.shortlist_size:]
@@ -171,18 +206,25 @@ class BirthdayFetcher:
             )
             return None
 
-        try:
-            image = self.commons.image_info(cand.image_filename)
-        except LicenseRejected as exc:
+        image = self._image_for(cand)
+        if isinstance(image, ImageTooSmall):
+            self.review.record(
+                LOW_RESOLUTION, name=cand.full_name, wikidata_id=cand.wikidata_id,
+                target_date=iso, file=cand.image_filename, detail=str(image),
+            )
+            log.info("%s: %s skipped -- %s", iso, cand.full_name, image)
+            return None
+        if isinstance(image, LicenseRejected):
             self.review.record(
                 NO_OPEN_LICENSE, name=cand.full_name, wikidata_id=cand.wikidata_id,
-                target_date=iso, file=cand.image_filename, detail=str(exc),
+                target_date=iso, file=cand.image_filename, detail=str(image),
             )
             return None
-        except WikimediaError as exc:
+        if image is None:
             self.review.record(
                 IMAGE_FETCH_FAILED, name=cand.full_name, wikidata_id=cand.wikidata_id,
-                target_date=iso, file=cand.image_filename, detail=str(exc),
+                target_date=iso, file=cand.image_filename,
+                detail="Commons lookup returned nothing for this file",
             )
             return None
 
@@ -202,6 +244,10 @@ class BirthdayFetcher:
         if not alive.ok:
             notes.append(alive.detail)
         notes.extend(image.warnings)
+        scale = upscale_factor(image.width, image.height,
+                               self.cfg.render.width, self.cfg.render.height)
+        if scale > 1.0:
+            notes.append(f"photo enlarged {scale:.2f}x to fill the frame")
 
         return Person(
             wikidata_id=cand.wikidata_id,
@@ -213,6 +259,8 @@ class BirthdayFetcher:
             category=cand.category,
             image_url=image.image_url,
             image_file_page=image.file_page_url,
+            image_width=image.width,
+            image_height=image.height,
             image_license=f"{image.license_name} [{image.license_family}]",
             image_attribution=image.attribution,
             alive_verified=alive.status,

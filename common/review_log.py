@@ -15,6 +15,7 @@ from typing import Any
 # Reason codes (stable strings -- grep-friendly)
 NO_IMAGE_CLAIM = "no_p18_image_claim"
 NO_OPEN_LICENSE = "no_open_licensed_image"
+LOW_RESOLUTION = "image_resolution_too_low"
 IMAGE_FETCH_FAILED = "image_metadata_fetch_failed"
 ALIVE_MISMATCH = "alive_status_mismatch"
 ALIVE_UNVERIFIED = "alive_status_unverified"

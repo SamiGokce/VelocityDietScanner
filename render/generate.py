@@ -16,6 +16,7 @@ import argparse
 import hashlib
 import logging
 import sys
+from math import ceil
 from datetime import date
 from pathlib import Path
 
@@ -27,13 +28,11 @@ from common.db import (GRAPHIC_FAILED, GRAPHIC_PENDING, GRAPHIC_READY, Database)
 from common.http import PoliteSession, WikimediaError
 from common.review_log import RENDER_FAILED, ReviewLog
 from render.graphic import RenderError, render_layers_to_files, render_to_file
+from scripts.commons import upscale_factor
 from render.video import VideoError, render_video
 
 log = logging.getLogger("render")
 
-#: Anything smaller than this is too soft to fill a 1080x1920 frame.
-MIN_SOURCE_WIDTH = 480
-MIN_SOURCE_HEIGHT = 640
 FILEPATH_URL = "https://commons.wikimedia.org/wiki/Special:FilePath/{name}"
 
 
@@ -45,16 +44,34 @@ def _slug(text: str, limit: int = 48) -> str:
     return slug.strip("-")[:limit] or "person"
 
 
-def download_url_for(row) -> str:
-    """Prefer a width-limited Commons thumbnail over the full-size original.
+def thumbnail_width(source_width: int, source_height: int,
+                    target_width: int, target_height: int) -> int:
+    """The smallest Commons thumbnail that still covers the target frame.
 
-    Original Commons files are routinely 5-20 MB; Special:FilePath serves a
-    scaled JPEG/PNG that is already larger than the canvas.
+    Original Commons files are routinely 5-20 MB, so asking for the full file
+    every time is wasteful -- but asking for a fixed width throws away detail
+    on landscape sources, where height is the binding constraint.  This asks
+    for exactly enough, and never more than the original (Special:FilePath does
+    not upscale, so a larger request would silently return the original).
     """
+    if source_width <= 0 or source_height <= 0:
+        return target_width * 2          # unknown source: ask for a generous size
+    needed = max(target_width / source_width, target_height / source_height)
+    # needed >= target_width/source_width, so the scaled width always covers the
+    # target; capping at source_width keeps us from asking for an upscale that
+    # Special:FilePath would just answer with the original anyway.
+    return min(source_width, ceil(source_width * needed))
+
+
+def download_url_for(row, target_width: int, target_height: int) -> str:
     file_page = row["image_file_page"] or ""
     if "/File:" in file_page:
         name = file_page.split("/File:", 1)[1]
-        return FILEPATH_URL.format(name=name) + "?width=1800"
+        width = thumbnail_width(
+            int(row["image_width"] or 0), int(row["image_height"] or 0),
+            target_width, target_height,
+        )
+        return FILEPATH_URL.format(name=name) + f"?width={width}"
     return row["image_url"]
 
 
@@ -72,7 +89,10 @@ class Renderer:
 
     # -- image fetching -----------------------------------------------------
     def fetch_photo(self, row) -> Path:
-        url = download_url_for(row)
+        scale = self.cfg.render.supersample if self.make_video else 1
+        url = download_url_for(
+            row, self.cfg.render.width * scale, self.cfg.render.height * scale
+        )
         digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:16]
         cached = self.cfg.paths.image_cache_dir / f"{row['wikidata_id']}-{digest}"
         if cached.is_file() and cached.stat().st_size > 0:
@@ -98,9 +118,15 @@ class Renderer:
             photo_path = self.fetch_photo(row)
             with Image.open(photo_path) as probe:
                 width, height = probe.size
-            if width < MIN_SOURCE_WIDTH or height < MIN_SOURCE_HEIGHT:
+            # Sourcing already applied this rule against the Commons metadata;
+            # re-check the bytes we actually downloaded, in case the file was
+            # replaced or the row predates the quality gate.
+            scale = upscale_factor(width, height, self.cfg.render.width, self.cfg.render.height)
+            if scale > self.cfg.sourcing.max_upscale:
                 raise RenderError(
-                    f"source photo too small for a 1080x1920 frame ({width}x{height})"
+                    f"source photo is {width}x{height} and would need a {scale:.2f}x "
+                    f"enlargement to fill {self.cfg.render.width}x{self.cfg.render.height} "
+                    f"(limit {self.cfg.sourcing.max_upscale:.2f}x)"
                 )
 
             stem = f"{row['birthday']}_{_slug(name)}"
@@ -126,6 +152,7 @@ class Renderer:
                     age_turning=int(row["age_turning"]),
                     birth_year=int(row["birth_year"]),
                     cfg=self.cfg.render,
+                    scale=self.cfg.render.supersample,
                 )
                 video_path = self.cfg.paths.videos_dir / f"{stem}.mp4"
                 render_video(background, video_path, self.cfg, overlay_path=overlay)

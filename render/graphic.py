@@ -62,7 +62,10 @@ def to_black_and_white(image: Image.Image, cfg: RenderCfg) -> Image.Image:
     if cfg.brightness != 1.0:
         grey = ImageEnhance.Brightness(grey).enhance(cfg.brightness)
     if cfg.sharpen:
-        grey = grey.filter(ImageFilter.UnsharpMask(radius=2, percent=90, threshold=3))
+        # Scale the radius with the frame: a 2-pixel radius that reads well at
+        # 1080 wide is invisible on a 2160-wide supersampled layer.
+        radius = max(1.0, 2.0 * grey.width / 1080)
+        grey = grey.filter(ImageFilter.UnsharpMask(radius=radius, percent=90, threshold=3))
     return grey.convert("RGB")
 
 
@@ -211,9 +214,16 @@ def draw_overlay(canvas: Image.Image, text: OverlayText, cfg: RenderCfg) -> Imag
 
 # --- the whole frame -------------------------------------------------------
 
-def render_photo_layer(photo: Image.Image, cfg: RenderCfg) -> Image.Image:
-    """The treated photo alone: cropped to fill the canvas, black and white."""
-    return to_black_and_white(cover_crop(photo, cfg.width, cfg.height, cfg.crop_anchor_y), cfg)
+def render_photo_layer(photo: Image.Image, cfg: RenderCfg, scale: int = 1) -> Image.Image:
+    """The treated photo alone: cropped to fill the canvas, black and white.
+
+    `scale` renders above the final canvas size.  The video zooms into this
+    layer, so supersampling it means the push-in reveals real detail from the
+    source instead of enlarging an already-downsampled frame.
+    """
+    scale = max(1, int(scale))
+    cropped = cover_crop(photo, cfg.width * scale, cfg.height * scale, cfg.crop_anchor_y)
+    return to_black_and_white(cropped, cfg)
 
 
 def render_frame(photo: Image.Image, full_name: str, age_turning: int,
@@ -240,7 +250,8 @@ def render_to_file(photo_path: str | Path, destination: str | Path, full_name: s
 
 def render_layers_to_files(photo_path: str | Path, background_path: str | Path,
                            overlay_path: str | Path, full_name: str, age_turning: int,
-                           birth_year: int, cfg: RenderCfg) -> tuple[Path, Path]:
+                           birth_year: int, cfg: RenderCfg,
+                           scale: int = 1) -> tuple[Path, Path]:
     """Write the two video layers: the photo to be zoomed, and the fixed type.
 
     The composited result is pixel-identical to `render_to_file`; splitting it
@@ -253,7 +264,7 @@ def render_layers_to_files(photo_path: str | Path, background_path: str | Path,
         photo.load()
         if photo.mode != "RGB":
             photo = photo.convert("RGB")
-        render_photo_layer(photo, cfg).save(background_path, format="PNG")
+        render_photo_layer(photo, cfg, scale=scale).save(background_path, format="PNG")
     text = overlay_lines(full_name, age_turning, birth_year)
     overlay_layer(text, cfg).save(overlay_path, format="PNG")
     return background_path, overlay_path

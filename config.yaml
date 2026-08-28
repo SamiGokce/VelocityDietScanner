@@ -30,6 +30,18 @@ sourcing:
   request_delay_seconds: 1.0
   max_retries: 5
   require_english_article: true
+  # --- photo quality -------------------------------------------------------
+  # Commons' P18 pool is bimodal: plenty of 2500px press photos, and a long
+  # tail of thumbnails (some as small as 149x224). A photo that has to be
+  # enlarged to fill 1080x1920 looks soft, so anything past `max_upscale` is
+  # skipped during sourcing and the next-ranked person takes the slot.
+  #   1.00 = never enlarge at all (strictest; ~30% of candidates pass)
+  #   1.25 = allow a slight enlargement (default; ~45% pass)
+  #   1.60 = permissive; visibly soft photos start getting through
+  min_image_width: 1000
+  min_image_height: 1200
+  max_upscale: 1.25
+
   # Only these licence families are ever used.  Anything NC / ND / fair-use /
   # unidentifiable is rejected and logged.  Restricting this list to
   # [cc0, public-domain] would let you drop the description credit as well --
@@ -43,6 +55,11 @@ render:
   contrast: 1.20         # raise for a harder look; above ~1.3 faces start to blow out
   brightness: 1.0
   sharpen: true
+  # The video zooms into the photo, so its layer is rendered above the final
+  # canvas size (2 = 2160x3840) and the push-in reveals real detail instead of
+  # enlarging an already-downsampled frame. 1 disables supersampling; 3 costs
+  # render time and memory for little visible gain.
+  supersample: 2
 
   # Gradient overlay: nothing across the top 60%, easing to 18% black at the
   # bottom edge.  Keeps white type legible without a flat black bar.
