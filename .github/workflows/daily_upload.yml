@@ -1,0 +1,116 @@
+# Daily birthday pipeline: fetch -> render -> upload.
+#
+# Read this before enabling it (it is disabled by default -- see `if:` below):
+#
+#  1. It needs YouTube OAuth secrets in the repository:
+#       YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, YOUTUBE_REFRESH_TOKEN
+#     (Settings -> Secrets and variables -> Actions). Get the refresh token by
+#     running `python -m upload.youtube_auth` once on your own machine.
+#
+#  2. It needs an audio track, which is deliberately NOT in this repository.
+#     Either commit a track you have licensed to assets/audio/ and set
+#     AUDIO_TRACK_PATH below, or leave video rendering off and upload stills
+#     from your own machine instead. With no track the render step fails
+#     loudly -- by design.
+#
+#  3. The runner is ephemeral: the SQLite database is restored from and saved
+#     to the Actions cache. That is good enough for a single-writer daily job;
+#     if you also run the pipeline locally, run it in one place only, or move
+#     the database somewhere shared.
+#
+#  4. Check your YouTube API quota in the Google Cloud Console before raising
+#     the upload count. videos.insert is expensive and the published figures
+#     vary; the run will stop cleanly when the quota is exhausted.
+#
+# To enable: set `vars.PIPELINE_ENABLED` to `true`
+# (Settings -> Secrets and variables -> Actions -> Variables).
+
+name: Daily birthday upload
+
+on:
+  schedule:
+    - cron: "15 9 * * *"      # 09:15 UTC daily
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and render but do not upload"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: birthday-pipeline
+  cancel-in-progress: false
+
+jobs:
+  pipeline:
+    if: vars.PIPELINE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CONTACT_EMAIL: ${{ vars.CONTACT_EMAIL }}
+      YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+      YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+      YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Download open-licensed fonts
+        run: python scripts/get_fonts.py
+
+      - name: Restore database and caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            data
+            output/cache
+          key: birthday-db-${{ github.run_id }}
+          restore-keys: birthday-db-
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Extend the 90-day window
+        run: python -m scripts.fetch_birthdays --days 90
+
+      - name: Render today's graphics and videos
+        run: python -m render.generate --date "$(date -u +%F)" --retry-failed
+
+      - name: Upload to YouTube
+        if: ${{ github.event_name == 'schedule' || !inputs.dry_run }}
+        run: python -m upload.upload_daily --date "$(date -u +%F)"
+
+      - name: Upload dry run
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: python -m upload.upload_daily --date "$(date -u +%F)" --dry-run
+
+      - name: Pipeline status
+        if: always()
+        run: python main.py status
+
+      - name: Keep the review log and database as an artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: birthday-data
+          path: |
+            data/birthdays.sqlite3
+            data/review_log.jsonl
+          retention-days: 14
+          if-no-files-found: warn

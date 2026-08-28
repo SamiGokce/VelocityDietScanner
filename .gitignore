@@ -1,0 +1,27 @@
+# --- secrets: never commit OAuth material ---
+client_secret*.json
+*token*.json
+.env
+
+# --- generated data & media ---
+data/*.sqlite3
+data/*.sqlite3-journal
+data/*.sqlite3-shm
+data/*.sqlite3-wal
+data/*.csv
+!data/curated_notable.csv
+data/review_log.jsonl
+output/
+assets/fonts/*.ttf
+assets/fonts/*.otf
+assets/audio/*
+!assets/audio/README.md
+!assets/fonts/README.md
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/

@@ -1,0 +1,15 @@
+# Core pipeline
+requests>=2.31
+PyYAML>=6.0
+Pillow>=10.0
+
+# YouTube upload (only needed for upload/)
+google-api-python-client>=2.100
+google-auth>=2.23
+google-auth-oauthlib>=1.1
+google-auth-httplib2>=0.1.1
+
+# Tests
+pytest>=7.4
+# Optional: syntax-checks the SPARQL query in tests/test_sparql_query.py
+rdflib>=7.0

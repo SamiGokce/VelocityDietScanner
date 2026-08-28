@@ -1,0 +1,113 @@
+# ===========================================================================
+#  90-day birthday content pipeline
+#  Every path is relative to the repository root unless it starts with "/".
+#  ${VAR} placeholders are filled from the environment or a local .env file.
+# ===========================================================================
+
+schedule:
+  start_date: today        # "today" or an ISO date, e.g. 2026-09-01
+  days: 90
+  per_day_min: 3           # warn (in the review log) if a day yields fewer
+  per_day_max: 5           # never feature more than this many people per day
+
+paths:
+  database: data/birthdays.sqlite3
+  review_log: data/review_log.jsonl      # every skipped/flagged person
+  graphics_dir: output/graphics
+  videos_dir: output/videos
+  image_cache_dir: output/cache/images
+  curated_list: data/curated_notable.csv # optional fame allow-list
+
+sourcing:
+  # Wikimedia asks for a descriptive User-Agent with a real contact address.
+  # Requests may be throttled or blocked without one.
+  user_agent: "BirthdayContentBot/1.0 (https://github.com/SamiGokce/VelocityDietScanner; ${CONTACT_EMAIL:-you@example.com})"
+  sparql_endpoint: https://query.wikidata.org/sparql
+  min_sitelinks: 40        # fame proxy: Wikipedia editions linking the person
+  candidate_limit: 250     # max rows per day from the SPARQL query
+  pageviews_days: 90       # trailing window for the pageviews ranking
+  request_delay_seconds: 1.0
+  max_retries: 5
+  require_english_article: true
+  # Only these licence families are ever used.  Anything NC / ND / fair-use /
+  # unidentifiable is rejected and logged.  Restricting this list to
+  # [cc0, public-domain] would let you drop the description credit as well --
+  # at the cost of a much smaller pool of eligible people on most days.
+  allowed_licenses: [cc0, public-domain, cc-by, cc-by-sa]
+
+render:
+  width: 1080
+  height: 1920
+  crop_anchor_y: 0.32      # 0 = keep top of photo, 1 = keep bottom (faces sit high)
+  contrast: 1.25
+  brightness: 1.0
+  sharpen: true
+
+  # Gradient overlay: nothing across the top 60%, easing to 18% black at the
+  # bottom edge.  Keeps white type legible without a flat black bar.
+  vignette_start: 0.60
+  vignette_opacity: 0.18
+
+  fonts:
+    display: assets/fonts/Cinzel[wght].ttf
+    display_variation: Bold          # variable-font instance, ignored if absent
+    small: assets/fonts/Cinzel[wght].ttf
+    small_variation: Regular
+
+  name_max_size: 132       # the largest element on the frame
+  name_min_size: 56
+  small_size: 38           # ~3.5x smaller than the name
+  tracking_name: 0.06      # letter-spacing, in ems
+  tracking_small: 0.34     # wide inscriptional tracking on the small lines
+  gap_above_name: 46
+  gap_below_name: 135      # spec: 120-150px below the name
+  block_bottom_margin: 190
+  side_margin: 90
+  shadow_offset: 4
+  shadow_blur: 12
+  shadow_opacity: 0.55
+
+video:
+  enabled: true
+  duration_seconds: 20     # spec range: 15-30s
+  fps: 30
+  zoom: 1.12               # Ken Burns: how far the slow push-in travels
+  crf: 20
+  preset: medium
+  ffmpeg_binary: ffmpeg
+
+  # REQUIRED for video output.  Supply your own royalty-free instrumental
+  # (YouTube Audio Library, a cleared "no copyright" track, or a licensed
+  # library) and put it in assets/audio/.  There is no bundled fallback and
+  # no commercially released track will ever be downloaded or embedded:
+  # rendering fails loudly while this is empty.
+  audio_track_path: ""
+  audio_fade_in: 1.0
+  audio_fade_out: 2.0
+
+youtube:
+  client_secrets_path: ${YOUTUBE_CLIENT_SECRETS:-client_secret.json}
+  token_path: ${YOUTUBE_TOKEN_PATH:-youtube_token.json}
+  uploads_per_day: 3
+  # Strongly recommended for the first few weeks: upload as private or
+  # unlisted, glance at each video, then flip to public in YouTube Studio.
+  privacy_status: private        # private | unlisted | public
+  category_id: "24"              # 24 = Entertainment
+  made_for_kids: false
+  title_template: "{full_name} — Happy {ordinal_age} Birthday #shorts"
+  # {attribution} is required: it carries the CC BY / CC BY-SA credit for the
+  # photo, which is not shown anywhere on the video itself.
+  description_template: |
+    {full_name} turns {age_turning} today.
+
+    {category} · born {birth_date}
+
+    ---
+    Photo credit / licence:
+    {attribution}
+
+    Image sourced from Wikimedia Commons and used under its licence.
+    #shorts #birthday #{category_tag}
+  tags: [birthday, shorts, celebrity birthdays]
+  max_retries: 5
+  retry_base_delay: 5.0

@@ -1,0 +1,12 @@
+# Curated notability list (optional).
+#
+# People listed here bypass the sourcing.min_sitelinks threshold and are
+# considered before the ranked pool -- use it for someone your audience
+# knows but Wikidata under-ranks (a YouTuber, a regional star, a founder).
+#
+# Format: wikidata_id,name,notes   -- only the first column is read.
+# Find a Q-id from the person's Wikidata page URL.
+#
+# wikidata_id,name,notes
+# Q17455,MrBeast,creator - sitelink count lags his actual reach
+# Q3306550,Example Person,regional TV host
