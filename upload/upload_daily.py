@@ -72,7 +72,9 @@ def build_metadata(row, cfg: Config) -> dict:
     fields = {
         "full_name": row["full_name"],
         "age_turning": row["age_turning"],
-        "ordinal_age": ordinal(int(row["age_turning"])),
+        # The graphic is set in caps; a YouTube title is not, so offer both.
+        "ordinal_age": ordinal(int(row["age_turning"])).lower(),
+        "ordinal_age_caps": ordinal(int(row["age_turning"])),
         "birth_year": row["birth_year"],
         "birth_date": row["birth_date"],
         "category": row["category"],
@@ -81,9 +83,14 @@ def build_metadata(row, cfg: Config) -> dict:
         "license": row["image_license"] or "",
         "attribution": attribution,
     }
-    title = cfg.youtube.title_template.format(**fields)[:TITLE_LIMIT]
-
-    description = template.format(**fields)
+    try:
+        title = cfg.youtube.title_template.format(**fields)[:TITLE_LIMIT]
+        description = template.format(**fields)
+    except KeyError as exc:
+        raise ConfigError(
+            f"unknown placeholder {exc} in a youtube template. "
+            f"Available: {', '.join(sorted(fields))}."
+        ) from exc
     if len(description) > DESCRIPTION_LIMIT:
         # Trim the body, never the credit.
         keep = f"\n\n{attribution}"
@@ -120,7 +127,25 @@ class Uploader:
         self.dry_run = dry_run
         self.review = ReviewLog(cfg.paths.review_log)
         self._service = None
-        _, _, _, self.HttpError, self.MediaFileUpload = _import_google()
+        self._google = None
+        if not dry_run:
+            # Fail on a missing dependency now rather than mid-upload; a dry
+            # run needs neither the libraries nor any credentials.
+            self._load_google()
+
+    def _load_google(self):
+        if self._google is None:
+            _, _, _, http_error, media_upload = _import_google()
+            self._google = (http_error, media_upload)
+        return self._google
+
+    @property
+    def HttpError(self):
+        return self._load_google()[0]
+
+    @property
+    def MediaFileUpload(self):
+        return self._load_google()[1]
 
     @property
     def service(self):
@@ -129,14 +154,15 @@ class Uploader:
         return self._service
 
     def upload(self, row) -> str:
-        media_path = Path(row["video_path"] or row["graphic_path"] or "")
+        if not row["video_path"]:
+            raise NoVideoYet(
+                f"{row['full_name']}: rendered as a still only. Run "
+                "`python -m render.generate` with video enabled (and an audio "
+                "track configured) before uploading."
+            )
+        media_path = Path(row["video_path"])
         if not media_path.is_file():
             raise UploadError(f"media file missing: {media_path}")
-        if media_path.suffix.lower() != ".mp4":
-            raise UploadError(
-                f"{media_path.name} is not a video; YouTube needs an MP4. "
-                "Run `python -m render.generate` with video enabled."
-            )
         body = build_metadata(row, self.cfg)
 
         if self.dry_run:
@@ -187,7 +213,7 @@ class Uploader:
         raise UploadError(f"{label}: exhausted retries")
 
     def run(self, day: str, limit: int) -> tuple[int, int]:
-        posted = failed = 0
+        posted = failed = skipped = 0
         with Database(self.cfg.paths.database) as db:
             rows = db.uploadable(day, limit)
             if not rows:
@@ -205,6 +231,12 @@ class Uploader:
                         wikidata_id=row["wikidata_id"], target_date=day, detail=str(exc),
                     )
                     break
+                except NoVideoYet as exc:
+                    # Leave the row Pending: it becomes uploadable as soon as
+                    # the video is rendered, and a still is not a failure.
+                    log.warning("skipping %s -- %s", row["full_name"], exc)
+                    skipped += 1
+                    continue
                 except (UploadError, ConfigError, AuthError) as exc:
                     log.error("upload failed for %s: %s", row["full_name"], exc)
                     failed += 1
@@ -220,11 +252,17 @@ class Uploader:
                 if not self.dry_run:
                     db.mark_posted(row["id"], video_id)
                     log.info("posted %s -> https://youtu.be/%s", row["full_name"], video_id)
+        if skipped:
+            log.info("%d row(s) skipped: no video rendered yet", skipped)
         return posted, failed
 
 
 class QuotaExceeded(UploadError):
-    pass
+    """The day's API quota is gone; retrying before it resets is pointless."""
+
+
+class NoVideoYet(UploadError):
+    """The row is rendered as a still but has no MP4 to upload."""
 
 
 def _http_error_reason(exc) -> str:

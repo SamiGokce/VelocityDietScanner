@@ -39,7 +39,7 @@ def test_description_contains_the_attribution(row, cfg):
 def test_title_uses_the_name_and_ordinal_age(row, cfg):
     title = build_metadata(row, cfg)["snippet"]["title"]
     assert "Jack Black" in title
-    assert "57TH" in title
+    assert "57th" in title
     assert len(title) <= TITLE_LIMIT
 
 
@@ -79,3 +79,43 @@ def test_privacy_and_kids_flags_come_from_config(row, cfg):
 def test_default_privacy_is_not_public(cfg):
     """The spec recommends staging uploads privately first."""
     assert cfg.youtube.privacy_status in {"private", "unlisted"}
+
+
+def test_unknown_template_placeholder_is_a_config_error(row, cfg):
+    broken = replace(cfg, youtube=replace(
+        cfg.youtube, title_template="{nickname} birthday",
+        description_template="{attribution}"))
+    with pytest.raises(ConfigError, match="nickname"):
+        build_metadata(row, broken)
+
+
+def test_a_dry_run_needs_neither_google_libraries_nor_credentials(cfg, tmp_path, monkeypatch):
+    """The first thing anyone runs is a dry run, usually before OAuth setup."""
+    import upload.upload_daily as module
+
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("a dry run must not import the Google client libraries")
+
+    monkeypatch.setattr(module, "_import_google", refuse)
+    uploader = module.Uploader(replace(cfg, paths=replace(
+        cfg.paths, review_log=tmp_path / "review.jsonl")), dry_run=True)
+    assert uploader.dry_run
+
+
+def test_a_still_only_row_is_skipped_not_failed(row, cfg, tmp_path, monkeypatch):
+    import upload.upload_daily as module
+
+    monkeypatch.setattr(module, "_import_google", lambda: (None, None, None, None, None))
+    uploader = module.Uploader(replace(cfg, paths=replace(
+        cfg.paths, review_log=tmp_path / "review.jsonl")), dry_run=True)
+    with pytest.raises(module.NoVideoYet):
+        uploader.upload(row)          # the fixture row has no video_path
+
+
+def test_the_title_ordinal_is_lower_case_but_caps_stay_available(row, cfg):
+    """'Happy 57th Birthday' in a title; the graphic keeps its all-caps form."""
+    assert "57th" in build_metadata(row, cfg)["snippet"]["title"]
+    caps = replace(cfg, youtube=replace(
+        cfg.youtube, title_template="{full_name} {ordinal_age_caps}",
+        description_template="{attribution}"))
+    assert "57TH" in build_metadata(row, caps)["snippet"]["title"]

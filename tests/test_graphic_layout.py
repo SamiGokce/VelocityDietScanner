@@ -80,3 +80,43 @@ def test_photo_is_desaturated():
     frame = render_frame(colourful, "Test Person", 40, 1986, load_config().render)
     r, g, b = frame.getpixel((20, 20))
     assert r == g == b, "output must be black and white, never colourised"
+
+
+def test_highlights_are_preserved_better_than_a_symmetric_cutoff():
+    """The treatment must not blow out faces on brightly lit press photos.
+
+    Compared against the naive symmetric autocontrast + harder contrast on the
+    same input, rather than against a magic number: any image with a bright
+    subject clips less under the asymmetric cutoff.
+    """
+    from PIL import ImageEnhance, ImageOps
+
+    from render.graphic import to_black_and_white
+
+    cfg = load_config().render
+    # A photo-like image: a full tonal ramp with a brighter, graded subject in
+    # it, the way a lit face sits against a background.
+    source = Image.new("RGB", (600, 800))
+    pixels = source.load()
+    for y in range(800):
+        for x in range(600):
+            value = 30 + int(160 * y / 800)
+            if 180 <= x < 420 and 120 <= y < 420:      # the "subject"
+                value += int(60 * x / 600)
+            pixels[x, y] = (min(value, 255),) * 3
+
+    def clipped(image):
+        histogram = image.convert("L").histogram()
+        return sum(histogram[252:]) / sum(histogram)
+
+    ours = to_black_and_white(source, cfg)
+    naive = ImageEnhance.Contrast(
+        ImageOps.autocontrast(ImageOps.grayscale(source), cutoff=1)
+    ).enhance(1.25)
+
+    assert clipped(ours) < clipped(naive)
+    assert clipped(ours) < 0.10
+
+
+def test_contrast_default_stays_below_the_blow_out_point():
+    assert load_config().render.contrast <= 1.3

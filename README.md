@@ -271,7 +271,7 @@ Wikipedia disagree about whether someone is alive.
 pytest -q
 ```
 
-138 tests, no network required. The ones that matter most:
+144 tests, no network required. The ones that matter most:
 `test_ordinals.py` (every age 1–122), `test_alive_check.py`,
 `test_overlay_text.py` (captures every string drawn on a frame),
 `test_licensing.py`, `test_upload_metadata.py` (the credit is always present).
