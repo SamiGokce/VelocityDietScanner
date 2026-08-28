@@ -132,10 +132,18 @@ Measured pass rates on that same twenty-candidate pool:
 | 1.40 | 55% | softness becomes visible on faces |
 | 2.00 | 70% | visibly pixelated photos get through |
 
-With a 45-candidate detail pool per day, 45% is a comfortable margin over the
-3–5 slots. Raise `max_upscale` only if days start coming up short — the review
-log tells you (`image_resolution_too_low`), and `min_image_width` /
-`min_image_height` are an absolute floor underneath it.
+Across three sampled days the gate left 9 usable candidates per day (out of
+22–26 with a photo), against the 3–5 a day needs — so it is not a binding
+constraint in practice. If a day does come up short the review log says so
+(`day_underfilled`, plus one `image_resolution_too_low` per rejection), and you
+can refill just that day without loosening the default:
+
+```bash
+python -m scripts.fetch_birthdays --date 2026-11-04 --max-upscale 1.5
+```
+
+`min_image_width` / `min_image_height` are an absolute floor underneath the
+ratio test.
 
 Downloads then ask Commons for *exactly* enough pixels, computed from the
 original's stored dimensions — a fixed thumbnail width throws away detail on

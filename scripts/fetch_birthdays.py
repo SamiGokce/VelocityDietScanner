@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
@@ -296,6 +297,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="preview only: query and rank but write nothing to the database")
     p.add_argument("--shortlist", type=int, default=DEFAULT_SHORTLIST,
                    help="how many candidates per day get a pageviews lookup")
+    p.add_argument("--max-upscale", type=float, default=None,
+                   help="override the photo-quality gate (config: sourcing.max_upscale). "
+                        "Raise it to refill a day the review log reports as underfilled; "
+                        "1.0 never enlarges a photo at all.")
     p.add_argument("--export-csv", default=None, help="also write the database out as CSV")
     p.add_argument("-v", "--verbose", action="store_true")
     return p
@@ -309,6 +314,9 @@ def main(argv: list[str] | None = None) -> int:
         datefmt="%H:%M:%S",
     )
     cfg = load_config(args.config)
+    if args.max_upscale:
+        cfg = replace(cfg, sourcing=replace(cfg.sourcing, max_upscale=args.max_upscale))
+        log.info("photo-quality gate overridden: max_upscale=%.2f", args.max_upscale)
     cfg.ensure_dirs()
 
     if args.date:
