@@ -65,6 +65,61 @@ python main.py upload                        # actually post
 `--dry-run` on `run` is the spec's data-only mode: it produces the database and
 stops before any graphics are generated.
 
+## Start posting
+
+Roughly fifteen minutes of setup you do once, then it runs itself.
+
+**Only you can do these — they need your Google account in a browser:**
+
+1. **Google Cloud project** — <https://console.cloud.google.com/> → new project.
+2. **Enable the API** — APIs & Services → Library → *YouTube Data API v3* → Enable.
+3. **OAuth consent screen** — External. Add your own Google account as a test
+   user, then **publish the app** (Publishing status → Publish). Left in
+   "testing", refresh tokens expire after 7 days and a scheduled job dies
+   silently a week later. A single-user app does not need Google verification
+   for the upload scope.
+4. **Credentials** → Create Credentials → OAuth client ID → **Desktop app** →
+   download the JSON to the repo root as `client_secret.json` (gitignored).
+5. **Consent, once:**
+   ```bash
+   python -m upload.youtube_auth        # opens a browser; approve
+   python -m upload.youtube_auth --check # confirms it worked
+   ```
+   `--check` refreshes the stored token and prints what the next run would do.
+   Run it before trusting a schedule; it is the difference between finding out
+   now and finding out from an empty channel next week.
+
+**Then the pipeline takes over:**
+
+6. Put your music in `assets/audio/` and set `video.audio_track_path`.
+7. Build and render the window (long job — run it overnight):
+   ```bash
+   python main.py run --days 90
+   ```
+8. See exactly what today would post, without posting it:
+   ```bash
+   python -m upload.upload_daily --dry-run
+   ```
+9. Post for real. `youtube.privacy_status` defaults to `private`:
+   ```bash
+   python -m upload.upload_daily
+   ```
+10. Watch the first few in YouTube Studio — wrong photo, bad crop, odd
+    ordinal — then switch `privacy_status` to `unlisted` or `public` once you
+    trust it.
+11. Put it on a schedule (see **Scheduling** below).
+
+### Why the posting runs on your machine, not from a chat session
+
+The OAuth consent flow needs a browser signed into the Google account that owns
+the channel, and the resulting refresh token grants upload access to it. Nobody
+should hold that but you: it stays on your machine or in your repository's
+Actions secrets, and `.gitignore` already covers the token and client-secret
+files. A cloud coding session is also ephemeral — its container is reclaimed
+after a period of inactivity, so a schedule running there would stop without
+warning. `cron` on a machine you control, or the included GitHub Actions
+workflow, is what keeps posting.
+
 ### Running one step at a time
 
 `main.py` is a thin wrapper; these are equivalent and are what cron calls:
@@ -216,23 +271,16 @@ pipeline is built to keep the channel clear of claims and strikes.
 
 ---
 
-## 3. YouTube setup (one-time, done by you, outside the code)
+## 3. YouTube upload
 
-1. **Google Cloud project** — <https://console.cloud.google.com/> → new project.
-2. **Enable the API** — APIs & Services → Library → *YouTube Data API v3* → Enable.
-3. **OAuth consent screen** — External; add your own Google account as a test
-   user. (A channel-owner-only app does not need verification.)
-4. **Credentials** — Create Credentials → OAuth client ID → **Desktop app** →
-   download the JSON as `client_secret.json` in the repo root (it is gitignored).
-5. **Consent flow, once:**
-   ```bash
-   python -m upload.youtube_auth
-   ```
-   A browser opens; approve; a token file with a refresh token is written to
-   `youtube_token.json` (mode 600, gitignored). **Never commit it.**
-
-For CI, don't ship the file — copy its `refresh_token` into secrets and set
+Setup is in **Start posting** above. The consent flow writes
+`youtube_token.json` (mode 600, gitignored) — **never commit it**. For CI, don't
+ship the file: copy its `refresh_token` into secrets and set
 `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REFRESH_TOKEN`.
+
+`python -m upload.youtube_auth --check` verifies credentials without uploading,
+and reports clearly when a token has been revoked or has expired under a
+consent screen still in "testing" mode.
 
 ### Uploading
 
@@ -298,6 +346,8 @@ environment or a local `.env`. The settings worth knowing:
 | `render.vignette_start` / `vignette_opacity` | where the gradient starts, and how dark it gets |
 | `render.name_max_size` / `small_size` | the type hierarchy (name ≈ 3.5× the small lines) |
 | `video.audio_track_path` | **your** royalty-free track; empty = hard failure |
+| `video.audio_start_offset` | seek past a slow track's quiet intro |
+| `video.audio_loudness_lufs` | normalise towards YouTube's playback target (-14) |
 | `youtube.privacy_status` | `private` / `unlisted` / `public` |
 | `youtube.uploads_per_day` | check your quota before raising this |
 

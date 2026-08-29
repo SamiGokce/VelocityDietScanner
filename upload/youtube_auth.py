@@ -84,13 +84,26 @@ def load_credentials(cfg: Config):
         creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
 
     if not creds.valid:
-        if creds.refresh_token:
-            creds.refresh(Request())
-        else:
+        if not creds.refresh_token:
             raise AuthError(
                 "stored credentials have no refresh token; delete the token file and "
                 "run `python -m upload.youtube_auth` again."
             )
+        try:
+            creds.refresh(Request())
+        except Exception as exc:  # google.auth.exceptions.RefreshError and friends
+            # A revoked, expired or mistyped refresh token is the normal way
+            # this breaks, usually inside an unattended cron run. Say what to do
+            # rather than surfacing a traceback into a log nobody reads.
+            raise AuthError(
+                f"stored credentials were rejected by Google: {exc}\n"
+                "This usually means the refresh token was revoked, the OAuth client "
+                "was deleted, or the consent screen is in 'testing' mode (tokens "
+                "expire after 7 days).\n"
+                "Fix: run `python -m upload.youtube_auth` again to re-consent, and "
+                "for an unattended schedule publish the consent screen so tokens "
+                "stop expiring."
+            ) from exc
     return creds
 
 
@@ -127,12 +140,43 @@ def run_consent_flow(cfg: Config, port: int = 0) -> Path:
     return token_path
 
 
+def check(cfg: Config) -> bool:
+    """Confirm stored credentials still work, without uploading anything.
+
+    Worth running before the first scheduled job: a cron entry that fails at
+    2am because the token was never created, or was revoked, is a silent gap in
+    the schedule rather than an error anyone sees.
+    """
+    try:
+        creds = load_credentials(cfg)
+    except (AuthError, ConfigError) as exc:
+        print(f"NOT READY\n\n{exc}")
+        return False
+    source = ("environment secrets" if credentials_from_env()
+              else f"token file {cfg.youtube.token_path}")
+    print("Credentials are valid.")
+    print(f"  source:  {source}")
+    print(f"  scopes:  {', '.join(creds.scopes or SCOPES)}")
+    print(f"  expires: {getattr(creds, 'expiry', None) or 'refreshes automatically'}")
+    print(f"\nUploads will be created as '{cfg.youtube.privacy_status}'"
+          f" ({cfg.youtube.uploads_per_day} per day).")
+    if cfg.youtube.privacy_status == "public":
+        print("  NOTE: videos will be public immediately. Consider 'private' or "
+              "'unlisted' for the first few days.")
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="One-time YouTube OAuth consent flow.")
     parser.add_argument("--config", default=None)
     parser.add_argument("--port", type=int, default=0, help="local callback port")
+    parser.add_argument("--check", action="store_true",
+                        help="verify existing credentials instead of running the flow")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+    if args.check:
+        return 0 if check(load_config(args.config)) else 1
 
     cfg = load_config(args.config)
     path = run_consent_flow(cfg, args.port)

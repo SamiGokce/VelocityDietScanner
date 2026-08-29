@@ -11,6 +11,13 @@ and gives exact control over the filter graph.
 The audio track is whatever the user put in `video.audio_track_path`.  If that
 is empty the render fails loudly: no bundled sample, no "default" music, and
 never a commercially released track.
+
+Two settings exist for the slow, quiet, cinematic instrumentals this format
+usually wants.  `audio_start_offset` seeks into the track, because such pieces
+open with thirty seconds of near-silence and a 15-30s clip taken from the head
+of the file is mostly nothing.  `audio_loudness_lufs` normalises the result:
+a soft piano recording can sit 12dB below a pop master, which on a phone is the
+difference between audible and not.
 """
 
 from __future__ import annotations
@@ -43,7 +50,9 @@ def ensure_ffmpeg(binary: str = "ffmpeg") -> str:
 def build_command(ffmpeg: str, frame: Path, audio: Path, destination: Path,
                   *, duration: float, fps: int, zoom: float, crf: int, preset: str,
                   width: int, height: int, fade_in: float, fade_out: float,
-                  overlay: Path | None = None, supersample: int = 2) -> list[str]:
+                  overlay: Path | None = None, supersample: int = 2,
+                  start_offset: float = 0.0,
+                  loudness_lufs: float | None = -14.0) -> list[str]:
     """Assemble the ffmpeg invocation (separated out so tests can inspect it)."""
     total_frames = max(1, int(round(duration * fps)))
     # zoompan works on a supersampled frame: oversampling keeps the slow
@@ -59,10 +68,16 @@ def build_command(ffmpeg: str, frame: Path, audio: Path, destination: Path,
         f"zoompan=z='min(zoom+{zoom_step:.6f},{zoom:.4f})':d={total_frames}"
         f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={width}x{height}:fps={fps}"
     )
-    audio_filter = (
-        f"afade=t=in:st=0:d={max(0.0, fade_in):.2f},"
+    audio_stages = []
+    if loudness_lufs is not None:
+        # Normalise before fading, so the fade shape is not re-scaled after it
+        # is applied.  -14 LUFS is what YouTube normalises playback towards.
+        audio_stages.append(f"loudnorm=I={loudness_lufs:.1f}:TP=-1.5:LRA=11")
+    audio_stages.append(f"afade=t=in:st=0:d={max(0.0, fade_in):.2f}")
+    audio_stages.append(
         f"afade=t=out:st={fade_out_start:.2f}:d={max(0.1, fade_out):.2f}"
     )
+    audio_filter = ",".join(audio_stages)
     inputs = ["-loop", "1", "-i", str(frame)]
     if overlay is not None:
         inputs += ["-loop", "1", "-i", str(overlay)]
@@ -75,7 +90,13 @@ def build_command(ffmpeg: str, frame: Path, audio: Path, destination: Path,
     else:
         audio_index = 1
         graph = f"[0:v]{zoom_chain},format=yuv420p[v];"
-    inputs += ["-stream_loop", "-1", "-i", str(audio)]  # loop short tracks to length
+    # -ss before -i seeks into the track (and each loop restarts from there),
+    # so a clip can start at the phrase that carries the piece rather than at
+    # whatever silence the file opens with.
+    inputs += ["-stream_loop", "-1"]
+    if start_offset > 0:
+        inputs += ["-ss", f"{start_offset:.2f}"]
+    inputs += ["-i", str(audio)]  # loop short tracks to length
 
     return [
         ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
@@ -125,6 +146,8 @@ def render_video(frame_path: str | Path, destination: str | Path, cfg: Config,
         fade_out=cfg.video.audio_fade_out,
         overlay=overlay,
         supersample=cfg.render.supersample,
+        start_offset=cfg.video.audio_start_offset,
+        loudness_lufs=cfg.video.audio_loudness_lufs,
     )
     log.debug("ffmpeg: %s", " ".join(command))
     result = subprocess.run(command, capture_output=True, text=True)

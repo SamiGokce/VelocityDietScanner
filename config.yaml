@@ -100,8 +100,17 @@ video:
   # no commercially released track will ever be downloaded or embedded:
   # rendering fails loudly while this is empty.
   audio_track_path: ""
-  audio_fade_in: 1.0
-  audio_fade_out: 2.0
+
+  # Slow, quiet, cinematic pieces need both of these.
+  # Seek into the track so a 16s clip lands on the part that carries the piece,
+  # not the near-silent intro these recordings usually open with.
+  audio_start_offset: 0.0
+  # Normalise loudness towards YouTube's own playback target. A soft piano
+  # recording can sit 12dB under a pop master, which on a phone speaker is the
+  # difference between audible and not. Leave empty to disable.
+  audio_loudness_lufs: -14
+  audio_fade_in: 2.0
+  audio_fade_out: 3.0
 
 youtube:
   client_secrets_path: ${YOUTUBE_CLIENT_SECRETS:-client_secret.json}

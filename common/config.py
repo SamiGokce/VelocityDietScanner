@@ -131,6 +131,8 @@ class VideoCfg:
     audio_track_path: str
     audio_fade_in: float
     audio_fade_out: float
+    audio_start_offset: float
+    audio_loudness_lufs: float | None
     crf: int
     preset: str
     ffmpeg_binary: str
@@ -286,8 +288,13 @@ def load_config(path: str | os.PathLike[str] | None = None) -> Config:
             fps=int(v.get("fps", 30)),
             zoom=float(v.get("zoom", 1.12)),
             audio_track_path=str(v.get("audio_track_path") or ""),
-            audio_fade_in=float(v.get("audio_fade_in", 1.0)),
-            audio_fade_out=float(v.get("audio_fade_out", 2.0)),
+            audio_fade_in=float(v.get("audio_fade_in", 2.0)),
+            audio_fade_out=float(v.get("audio_fade_out", 3.0)),
+            audio_start_offset=max(0.0, float(v.get("audio_start_offset", 0.0))),
+            audio_loudness_lufs=(
+                None if v.get("audio_loudness_lufs") in (None, "", False)
+                else float(v.get("audio_loudness_lufs"))
+            ),
             crf=int(v.get("crf", 20)),
             preset=str(v.get("preset", "medium")),
             ffmpeg_binary=str(v.get("ffmpeg_binary", "ffmpeg")),

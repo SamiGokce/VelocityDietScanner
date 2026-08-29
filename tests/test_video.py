@@ -80,3 +80,56 @@ def test_without_an_overlay_the_whole_frame_zooms():
     graph = command[command.index("-filter_complex") + 1]
     assert "overlay=" not in graph
     assert "[1:a]" in graph
+
+
+# --- settings for slow, quiet, cinematic tracks ----------------------------
+
+def _graph(command):
+    return command[command.index("-filter_complex") + 1]
+
+
+def base_command(**overrides):
+    kwargs = dict(
+        duration=20, fps=30, zoom=1.12, crf=20, preset="medium",
+        width=1080, height=1920, fade_in=2.0, fade_out=3.0,
+    )
+    kwargs.update(overrides)
+    return build_command(
+        "ffmpeg", Path("frame.png"), Path("music.mp3"), Path("out.mp4"), **kwargs
+    )
+
+
+def test_loudness_is_normalised_before_the_fades():
+    """Normalising after fading would re-scale the fade shape."""
+    graph = _graph(base_command(loudness_lufs=-14.0))
+    assert "loudnorm=I=-14.0:TP=-1.5:LRA=11" in graph
+    assert graph.index("loudnorm") < graph.index("afade=t=in")
+
+
+def test_loudness_normalisation_can_be_switched_off():
+    assert "loudnorm" not in _graph(base_command(loudness_lufs=None))
+
+
+def test_start_offset_seeks_into_the_track_before_the_input():
+    """-ss must precede -i to seek the input rather than the output."""
+    command = base_command(start_offset=42.5)
+    assert "-ss" in command
+    assert command.index("-ss") < command.index("music.mp3")
+    assert command[command.index("-ss") + 1] == "42.50"
+
+
+def test_no_offset_means_no_seek_argument():
+    assert "-ss" not in base_command(start_offset=0.0)
+
+
+def test_the_track_still_loops_when_seeking_into_it():
+    """A 40s piece started at 30s must still fill a 20s clip."""
+    command = base_command(start_offset=30.0)
+    assert command.index("-stream_loop") < command.index("-ss")
+
+
+def test_fades_suit_a_slow_piece_by_default():
+    from common.config import load_config
+    video = load_config().video
+    assert video.audio_fade_in >= 1.5
+    assert video.audio_fade_out >= 2.0
