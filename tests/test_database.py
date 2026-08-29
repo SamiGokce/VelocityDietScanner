@@ -93,3 +93,25 @@ def test_csv_export_uses_the_spec_columns(tmp_path):
         out = db.export_csv(tmp_path / "out.csv", spec_columns_only=True)
     header = Path(out).read_text(encoding="utf-8").splitlines()[0]
     assert header.split(",") == list(SPEC_COLUMNS)
+
+
+def test_a_fresh_database_needs_no_migration(tmp_path, caplog):
+    """SCHEMA must already contain every column the migration knows about.
+
+    These drifted apart once: the columns were added to the migration but not
+    to CREATE TABLE, so every new database was built wrong and immediately
+    patched. It worked, which is exactly why it went unnoticed.
+    """
+    import logging
+    with caplog.at_level(logging.INFO, logger="common.db"):
+        Database(tmp_path / "fresh.sqlite3").close()
+    assert "migrated database" not in caplog.text
+
+
+def test_schema_and_migration_agree(tmp_path):
+    from common.db import SCHEMA
+    columns = {r[1] for r in
+               Database(tmp_path / "d.sqlite3").conn.execute("PRAGMA table_info(people)")}
+    for column in ("image_width", "image_height"):
+        assert column in columns
+        assert column in SCHEMA, f"{column} is migrated but missing from SCHEMA"

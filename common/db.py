@@ -56,6 +56,8 @@ CREATE TABLE IF NOT EXISTS people (
     category          TEXT    NOT NULL,
     image_url         TEXT,
     image_file_page   TEXT,
+    image_width       INTEGER DEFAULT 0,
+    image_height      INTEGER DEFAULT 0,
     image_license     TEXT,
     image_attribution TEXT,
     alive_verified    TEXT    NOT NULL DEFAULT 'unverified',
