@@ -156,6 +156,48 @@ class YouTubeCfg:
 
 
 @dataclass(frozen=True)
+class R2Cfg:
+    """Cloudflare R2: temporary public hosting so Instagram can fetch a video.
+
+    Instagram's publish flow works by URL, not by upload -- it fetches the file
+    itself, so it needs somewhere public to fetch it from. R2 was picked for
+    this over S3/GCS because its free tier has no expiry and, critically, no
+    egress fee: every post means a stranger's server downloading a video from
+    ours, and that is exactly the kind of traffic S3 and GCS meter and bill.
+    """
+    account_id: str
+    access_key_id: str
+    secret_access_key: str
+    bucket: str
+    public_url_base: str
+    delete_after_publish: bool
+
+    @property
+    def endpoint_url(self) -> str:
+        return f"https://{self.account_id}.r2.cloudflarestorage.com"
+
+    def configured(self) -> bool:
+        return bool(self.account_id and self.access_key_id and self.secret_access_key
+                    and self.bucket and self.public_url_base)
+
+
+@dataclass(frozen=True)
+class InstagramCfg:
+    access_token: str
+    ig_user_id: str
+    uploads_per_day: int
+    caption_template: str
+    max_retries: int
+    retry_base_delay: float
+    poll_interval_seconds: float
+    poll_timeout_seconds: float
+    graph_api_version: str
+
+    def configured(self) -> bool:
+        return bool(self.access_token and self.ig_user_id)
+
+
+@dataclass(frozen=True)
 class Config:
     schedule: Schedule
     paths: Paths
@@ -163,6 +205,8 @@ class Config:
     render: RenderCfg
     video: VideoCfg
     youtube: YouTubeCfg
+    r2: R2Cfg
+    instagram: InstagramCfg
     raw: dict[str, Any] = field(repr=False, default_factory=dict)
 
     # -- validation helpers -------------------------------------------------
@@ -218,6 +262,8 @@ def load_config(path: str | os.PathLike[str] | None = None) -> Config:
     r = data.get("render", {})
     v = data.get("video", {})
     y = data.get("youtube", {})
+    r2_data = data.get("r2", {})
+    ig = data.get("instagram", {})
     fonts = r.get("fonts", {})
 
     vignette_opacity = float(r.get("vignette_opacity", 0.18))
@@ -315,6 +361,25 @@ def load_config(path: str | os.PathLike[str] | None = None) -> Config:
             tags=tuple(y.get("tags", [])),
             max_retries=int(y.get("max_retries", 5)),
             retry_base_delay=float(y.get("retry_base_delay", 5.0)),
+        ),
+        r2=R2Cfg(
+            account_id=str(r2_data.get("account_id") or ""),
+            access_key_id=str(r2_data.get("access_key_id") or ""),
+            secret_access_key=str(r2_data.get("secret_access_key") or ""),
+            bucket=str(r2_data.get("bucket") or ""),
+            public_url_base=str(r2_data.get("public_url_base") or "").rstrip("/"),
+            delete_after_publish=bool(r2_data.get("delete_after_publish", True)),
+        ),
+        instagram=InstagramCfg(
+            access_token=str(ig.get("access_token") or ""),
+            ig_user_id=str(ig.get("ig_user_id") or ""),
+            uploads_per_day=int(ig.get("uploads_per_day", 4)),
+            caption_template=str(ig.get("caption_template", "")),
+            max_retries=int(ig.get("max_retries", 5)),
+            retry_base_delay=float(ig.get("retry_base_delay", 5.0)),
+            poll_interval_seconds=float(ig.get("poll_interval_seconds", 3.0)),
+            poll_timeout_seconds=float(ig.get("poll_timeout_seconds", 180.0)),
+            graph_api_version=str(ig.get("graph_api_version", "v21.0")),
         ),
         raw=data,
     )
