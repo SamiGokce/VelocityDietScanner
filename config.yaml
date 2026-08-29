@@ -99,7 +99,7 @@ video:
   # library) and put it in assets/audio/.  There is no bundled fallback and
   # no commercially released track will ever be downloaded or embedded:
   # rendering fails loudly while this is empty.
-  audio_track_path: ""
+  audio_track_path: ${AUDIO_TRACK_PATH:-}
 
   # Slow, quiet, cinematic pieces need both of these.
   # Seek into the track so a 16s clip lands on the part that carries the piece,
