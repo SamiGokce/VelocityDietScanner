@@ -35,7 +35,8 @@ from common.review_log import (ALIVE_MISMATCH, ALIVE_UNVERIFIED, BELOW_THRESHOLD
                                NO_ENGLISH_ARTICLE, NO_IMAGE_CLAIM,
                                NO_OPEN_LICENSE, NOT_SELECTED, ReviewLog)
 from scripts.alive_check import AliveChecker
-from scripts.commons import (CommonsClient, ImageTooSmall, LicenseRejected,
+from scripts.commons import (CommonsClient, ImageInfo, ImageTooSmall,
+                             LicenseRejected, _normalise, score_image,
                              upscale_factor)
 from scripts.pageviews import PageviewsClient, notability_score
 from scripts.wikidata import Candidate, WikidataClient, load_curated_list
@@ -128,7 +129,7 @@ class BirthdayFetcher:
         # per person: Wikimedia throttles hard, and most of these photos are
         # checked only to be rejected on licence or resolution.
         self._images = {}
-        filenames = [c.image_filename for c in ranked if c.image_filename]
+        filenames = [name for c in ranked for name in c.image_filenames]
         if filenames:
             try:
                 self._images = self.commons.image_info_batch(filenames)
@@ -167,18 +168,58 @@ class BirthdayFetcher:
         return accepted
 
     def _image_for(self, cand: Candidate):
-        """The prefetched Commons result, falling back to a single lookup."""
-        from scripts.commons import _normalise
+        """Find the best usable photograph of this person.
 
-        key = _normalise(cand.image_filename or "")
-        if key in getattr(self, "_images", {}):
-            return self._images[key]
+        Wikidata's P18 is one editor's pick, not the best picture available.
+        When it fails the licence or resolution gate we widen the search to the
+        person's whole Commons category before giving up -- otherwise someone
+        like Beyonce is dropped over a single 900x1200 file while hundreds of
+        usable photographs of her sit one query away.
+        """
+        canvas = (self.cfg.render.width, self.cfg.render.height)
+        prefetched = getattr(self, "_images", {})
+
+        # 1. The curated P18 photos, already fetched with the day's batch.
+        usable = [
+            result for result in (
+                prefetched.get(_normalise(name)) for name in cand.image_filenames
+            ) if isinstance(result, ImageInfo)
+        ]
+        if usable:
+            return max(usable, key=lambda info: score_image(
+                info, canvas, is_primary=True, person_name=cand.full_name))
+
+        # 2. Widen: every free photograph we can find of them.
+        widened = self.commons.person_photo_candidates(
+            cand.full_name, cand.commons_category,
+            extra=tuple(cand.image_filenames),
+        )
+        if not widened:
+            return self._first_failure(cand, prefetched)
+
+        log.debug("%s: P18 unusable, checking %d photos from Commons",
+                  cand.full_name, len(widened))
         try:
-            return self.commons.image_info(cand.image_filename)
+            return self.commons.best_image(
+                widened, primary=tuple(cand.image_filenames),
+                person_name=cand.full_name,
+            )
         except (LicenseRejected, ImageTooSmall) as exc:
             return exc
         except (WikimediaError, KeyError):
-            return None
+            return self._first_failure(cand, prefetched)
+
+    def _first_failure(self, cand: Candidate, prefetched: dict):
+        """The most informative reason the curated photos could not be used."""
+        failures = [
+            result for result in (
+                prefetched.get(_normalise(name)) for name in cand.image_filenames
+            ) if isinstance(result, Exception)
+        ]
+        for failure in failures:
+            if isinstance(failure, ImageTooSmall):
+                return failure
+        return failures[0] if failures else None
 
     def _shortlist(self, candidates: list[Candidate]) -> tuple[list[Candidate], list[Candidate]]:
         ordered = sorted(candidates, key=lambda c: (not c.curated, -c.sitelinks))
@@ -200,10 +241,10 @@ class BirthdayFetcher:
                 target_date=iso, detail="no English Wikipedia article to verify against",
             )
             return None
-        if not cand.image_filename:
+        if not cand.image_filenames and not cand.commons_category:
             self.review.record(
                 NO_IMAGE_CLAIM, name=cand.full_name, wikidata_id=cand.wikidata_id,
-                target_date=iso, detail="no P18 image claim on Wikidata",
+                target_date=iso, detail="no P18 image claim and no Commons category",
             )
             return None
 

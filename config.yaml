@@ -7,8 +7,8 @@
 schedule:
   start_date: today        # "today" or an ISO date, e.g. 2026-09-01
   days: 90
-  per_day_min: 3           # warn (in the review log) if a day yields fewer
-  per_day_max: 5           # never feature more than this many people per day
+  per_day_min: 4           # warn (in the review log) if a day yields fewer
+  per_day_max: 4           # exactly four people per day, the four most famous
 
 paths:
   database: data/birthdays.sqlite3
@@ -115,13 +115,13 @@ video:
 youtube:
   client_secrets_path: ${YOUTUBE_CLIENT_SECRETS:-client_secret.json}
   token_path: ${YOUTUBE_TOKEN_PATH:-youtube_token.json}
-  uploads_per_day: 3
+  uploads_per_day: 4
   # Strongly recommended for the first few weeks: upload as private or
   # unlisted, glance at each video, then flip to public in YouTube Studio.
   privacy_status: private        # private | unlisted | public
   category_id: "24"              # 24 = Entertainment
   made_for_kids: false
-  title_template: "{full_name} — Happy {ordinal_age} Birthday #shorts"   # {ordinal_age_caps} for 75TH
+  title_template: "Happy Birthday {full_name}, now {age_turning}!!!"
   # {attribution} is required: it carries the CC BY / CC BY-SA credit for the
   # photo, which is not shown anywhere on the video itself.
   description_template: |

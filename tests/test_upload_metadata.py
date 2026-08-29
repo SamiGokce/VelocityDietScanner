@@ -36,10 +36,10 @@ def test_description_contains_the_attribution(row, cfg):
     assert ATTRIBUTION in body["snippet"]["description"]
 
 
-def test_title_uses_the_name_and_ordinal_age(row, cfg):
+def test_title_reads_happy_birthday_name_now_age(row, cfg):
+    """The channel's format: 'Happy Birthday Jack Black, now 57!!!'"""
     title = build_metadata(row, cfg)["snippet"]["title"]
-    assert "Jack Black" in title
-    assert "57th" in title
+    assert title == "Happy Birthday Jack Black, now 57!!!"
     assert len(title) <= TITLE_LIMIT
 
 
@@ -112,10 +112,25 @@ def test_a_still_only_row_is_skipped_not_failed(row, cfg, tmp_path, monkeypatch)
         uploader.upload(row)          # the fixture row has no video_path
 
 
-def test_the_title_ordinal_is_lower_case_but_caps_stay_available(row, cfg):
-    """'Happy 57th Birthday' in a title; the graphic keeps its all-caps form."""
-    assert "57th" in build_metadata(row, cfg)["snippet"]["title"]
+def test_ordinal_forms_remain_available_to_templates(row, cfg):
+    """The graphic uses '57TH'; a title could still ask for either form."""
+    lower = replace(cfg, youtube=replace(
+        cfg.youtube, title_template="{full_name} {ordinal_age}",
+        description_template="{attribution}"))
+    assert "57th" in build_metadata(row, lower)["snippet"]["title"]
     caps = replace(cfg, youtube=replace(
         cfg.youtube, title_template="{full_name} {ordinal_age_caps}",
         description_template="{attribution}"))
     assert "57TH" in build_metadata(row, caps)["snippet"]["title"]
+
+
+def test_a_very_long_name_still_fits_the_title_limit(row, cfg, tmp_path):
+    from common.db import Database, Person
+    with Database(tmp_path / "long.sqlite3") as db:
+        db.upsert_person(Person(
+            wikidata_id="Q2", full_name="Wolfeschlegelsteinhausenbergerdorff " * 4,
+            birthday="2026-08-28", birth_date="1980-08-28", birth_year=1980,
+            age_turning=46, category="Actor", image_attribution="Photo: X, CC BY 4.0",
+            alive_verified="yes"))
+        long_row = db.all_rows()[0]
+    assert len(build_metadata(long_row, cfg)["snippet"]["title"]) <= TITLE_LIMIT

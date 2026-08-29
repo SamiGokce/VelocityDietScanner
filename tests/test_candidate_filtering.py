@@ -7,7 +7,8 @@ from scripts.wikidata import WikidataClient, _article_title, _image_filename, _p
 DAY = date(2026, 8, 28)
 
 
-def row(qid, label, dob, sitelinks, occupations, image=None, article=None, dead=None):
+def row(qid, label, dob, sitelinks, occupations, image=None, article=None,
+        dead=None, images=None, commons_category=None):
     binding = {
         "person": {"value": f"http://www.wikidata.org/entity/{qid}"},
         "dob": {"value": dob},
@@ -16,8 +17,11 @@ def row(qid, label, dob, sitelinks, occupations, image=None, article=None, dead=
     }
     if label:
         binding["personLabel"] = {"value": label}
-    if image:
-        binding["image"] = {"value": image}
+    uris = list(images or ([image] if image else []))
+    if uris:
+        binding["images"] = {"value": "|".join(uris)}
+    if commons_category:
+        binding["commonsCategory"] = {"value": commons_category}
     if article:
         binding["article"] = {"value": article}
     if dead:
@@ -89,3 +93,35 @@ def test_uri_parsing_helpers():
     assert _parse_dob("1969-08-28T00:00:00Z") == date(1969, 8, 28)
     assert _parse_dob("not a date") is None
     assert _parse_dob("0000-00-00T00:00:00Z") is None
+
+
+def test_every_p18_photo_is_kept_not_just_the_first():
+    """A person can carry several P18 statements; the first is not always best."""
+    out = candidates([row(
+        "Q9", "Many Photos", "1969-08-28T00:00:00Z", 120, ["Q33999"],
+        images=[
+            "http://commons.wikimedia.org/wiki/Special:FilePath/One.jpg",
+            "http://commons.wikimedia.org/wiki/Special:FilePath/Two.jpg",
+        ],
+    )])
+    assert out[0].image_filenames == ["One.jpg", "Two.jpg"]
+    assert out[0].image_filename == "One.jpg"
+
+
+def test_the_commons_category_is_captured():
+    """It is the doorway to every other free photo of the person."""
+    out = candidates([row(
+        "Q10", "Categorised", "1969-08-28T00:00:00Z", 120, ["Q33999"],
+        image="http://commons.wikimedia.org/wiki/Special:FilePath/A.jpg",
+        commons_category="Beyonce",
+    )])
+    assert out[0].commons_category == "Beyonce"
+
+
+def test_a_person_with_only_a_category_still_has_a_route_to_a_photo():
+    out = candidates([row(
+        "Q11", "No P18", "1969-08-28T00:00:00Z", 120, ["Q33999"],
+        commons_category="Some Person",
+    )])
+    assert out[0].image_filenames == []
+    assert out[0].commons_category == "Some Person"

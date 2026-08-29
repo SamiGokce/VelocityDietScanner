@@ -72,14 +72,20 @@ LIMIT %(limit)d
 """
 
 DETAIL_QUERY = PREFIXES + """
-SELECT ?person ?personLabel ?dob ?sitelinks ?image ?article ?dead
+SELECT ?person ?personLabel ?dob ?sitelinks ?article ?dead ?commonsCategory
        (GROUP_CONCAT(DISTINCT STRAFTER(STR(?occ), "/entity/"); separator=",") AS ?occupations)
+       (GROUP_CONCAT(DISTINCT STR(?image); separator="|") AS ?images)
 WHERE {
   VALUES ?person { %(people)s }
   ?person wikibase:sitelinks ?sitelinks ;
           wdt:P569 ?dob ;
           wdt:P106 ?occ .
+  # A person may carry several P18 statements; take them all, because the
+  # first one is not always the best photograph of them.
   OPTIONAL { ?person wdt:P18 ?image }
+  # The Commons category is the doorway to every other free photo of them --
+  # P18 is one editor's pick, not the best available picture.
+  OPTIONAL { ?person wdt:P373 ?commonsCategory }
   OPTIONAL { ?person rdfs:label ?personLabel FILTER(LANG(?personLabel) = "en") }
   OPTIONAL {
     ?article schema:about ?person ;
@@ -87,7 +93,7 @@ WHERE {
   }
   OPTIONAL { ?person wdt:P570 ?dead }
 }
-GROUP BY ?person ?personLabel ?dob ?sitelinks ?image ?article ?dead
+GROUP BY ?person ?personLabel ?dob ?sitelinks ?article ?dead ?commonsCategory
 """
 
 #: Year bands used to split query A when it exceeds the service's time budget.
@@ -102,7 +108,8 @@ class Candidate:
     birth_date: date
     sitelinks: int
     occupations: list[str]
-    image_filename: str | None = None
+    image_filenames: list[str] = field(default_factory=list)
+    commons_category: str | None = None
     wikipedia_title: str | None = None
     curated: bool = False
     pageviews: int = 0
@@ -112,6 +119,11 @@ class Candidate:
     @property
     def category(self) -> str:
         return categorise(self.occupations)
+
+    @property
+    def image_filename(self) -> str | None:
+        """The primary (first P18) photo, if any."""
+        return self.image_filenames[0] if self.image_filenames else None
 
 
 def _qid(uri: str) -> str:
@@ -289,7 +301,13 @@ class WikidataClient:
                 birth_date=dob,
                 sitelinks=int(row.get("sitelinks", {}).get("value", 0) or 0),
                 occupations=occupations,
-                image_filename=_image_filename(row.get("image", {}).get("value")),
+                image_filenames=[
+                    name for name in (
+                        _image_filename(uri) for uri in
+                        row.get("images", {}).get("value", "").split("|") if uri
+                    ) if name
+                ],
+                commons_category=(row.get("commonsCategory", {}).get("value") or "").strip() or None,
                 wikipedia_title=_article_title(row.get("article", {}).get("value")),
                 curated=qid in curated,
             ))
