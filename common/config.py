@@ -91,6 +91,8 @@ class Sourcing:
     min_image_width: int
     min_image_height: int
     max_upscale: float
+    max_image_megapixels: float
+    max_download_mb: float
 
 
 @dataclass(frozen=True)
@@ -254,6 +256,8 @@ def load_config(path: str | os.PathLike[str] | None = None) -> Config:
             min_image_width=int(s.get("min_image_width", 1000)),
             min_image_height=int(s.get("min_image_height", 1200)),
             max_upscale=float(s.get("max_upscale", 1.25)),
+            max_image_megapixels=float(s.get("max_image_megapixels", 80.0)),
+            max_download_mb=float(s.get("max_download_mb", 40.0)),
         ),
         render=RenderCfg(
             width=int(r.get("width", 1080)),

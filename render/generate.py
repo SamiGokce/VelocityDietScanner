@@ -101,9 +101,21 @@ class Renderer:
         response = self.session.get(url, stream=True)
         if not response.ok:
             raise WikimediaError(f"image download failed ({response.status_code}): {url}")
+        # A ceiling in case Commons served the original instead of a thumbnail:
+        # better to fail this one person than to stall the run on a 100MB file.
+        ceiling = int(self.cfg.sourcing.max_download_mb * 1e6)
         cached.parent.mkdir(parents=True, exist_ok=True)
+        written = 0
         with cached.open("wb") as fh:
             for chunk in response.iter_content(chunk_size=1 << 16):
+                written += len(chunk)
+                if written > ceiling:
+                    fh.close()
+                    cached.unlink(missing_ok=True)
+                    raise RenderError(
+                        f"download exceeded {self.cfg.sourcing.max_download_mb:.0f}MB "
+                        f"for {url} -- Commons likely served the full original"
+                    )
                 fh.write(chunk)
         if cached.stat().st_size == 0:
             cached.unlink(missing_ok=True)

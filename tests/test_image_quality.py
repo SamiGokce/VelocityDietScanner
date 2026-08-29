@@ -133,3 +133,28 @@ def test_thumbnail_width_covers_the_target_frame():
 
 def test_unknown_source_dimensions_ask_generously():
     assert thumbnail_width(0, 0, 1080, 1920) == 2160
+
+
+# --- guards against pathologically large files ------------------------------
+
+def test_a_normal_large_press_photo_is_fine(client):
+    """45MP originals are common and cost nothing: we fetch a thumbnail."""
+    assert client._build("Test.jpg", build(5508, 8256)).width == 5508
+
+
+def test_an_absurdly_large_file_is_refused(client):
+    """Commons cannot reliably thumbnail these, and Pillow refuses ~89MP+."""
+    with pytest.raises(ImageTooSmall, match="MP"):
+        client._build("Test.jpg", build(12000, 9000))   # 108MP
+
+
+def test_the_megapixel_ceiling_sits_under_pillows_bomb_limit():
+    from PIL import Image
+    from common.config import load_config
+    ceiling = load_config().sourcing.max_image_megapixels
+    assert ceiling * 1e6 < Image.MAX_IMAGE_PIXELS
+
+
+def test_download_ceiling_is_configured():
+    from common.config import load_config
+    assert load_config().sourcing.max_download_mb >= 10

@@ -270,13 +270,15 @@ def score_image(info: "ImageInfo", canvas: tuple[int, int], *,
 class CommonsClient:
     def __init__(self, session: PoliteSession, allowed_families: tuple[str, ...],
                  canvas: tuple[int, int] = (1080, 1920), min_width: int = 1000,
-                 min_height: int = 1200, max_upscale: float = 1.25) -> None:
+                 min_height: int = 1200, max_upscale: float = 1.25,
+                 max_megapixels: float = 80.0) -> None:
         self.session = session
         self.allowed = tuple(allowed_families)
         self.canvas = canvas
         self.min_width = min_width
         self.min_height = min_height
         self.max_upscale = max_upscale
+        self.max_megapixels = max_megapixels
 
     # -- fetching -----------------------------------------------------------
     def _query(self, titles: list[str]) -> dict[str, dict]:
@@ -484,6 +486,17 @@ class CommonsClient:
             raise LicenseRejected(f"{title} is not an image ({mime})")
 
         width, height = int(info.get("width") or 0), int(info.get("height") or 0)
+        # Downloads are already capped to a scaled thumbnail, so a big original
+        # normally costs nothing. The exception is a file so large that Commons
+        # cannot thumbnail it at all -- Special:FilePath then serves the
+        # original, which can be a 100MB download that Pillow refuses anyway
+        # (its decompression-bomb limit is ~89MP).
+        megapixels = (width * height) / 1e6
+        if megapixels > self.max_megapixels:
+            raise ImageTooSmall(
+                f"{title} is {width}x{height} ({megapixels:.0f}MP), beyond the "
+                f"{self.max_megapixels:.0f}MP ceiling for reliable thumbnailing"
+            )
         scale = upscale_factor(width, height, *self.canvas)
         if width < self.min_width or height < self.min_height:
             raise ImageTooSmall(

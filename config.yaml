@@ -41,6 +41,11 @@ sourcing:
   min_image_width: 1000
   min_image_height: 1200
   max_upscale: 1.25
+  # Downloads are already scaled server-side to just cover the frame, so a
+  # large original costs nothing. These two only exist for the rare file so
+  # big that Commons cannot thumbnail it and serves the original instead.
+  max_image_megapixels: 80     # Pillow refuses above ~89MP anyway
+  max_download_mb: 40
 
   # Only these licence families are ever used.  Anything NC / ND / fair-use /
   # unidentifiable is rejected and logged.  Restricting this list to

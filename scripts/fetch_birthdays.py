@@ -74,6 +74,7 @@ class BirthdayFetcher:
             min_width=config.sourcing.min_image_width,
             min_height=config.sourcing.min_image_height,
             max_upscale=config.sourcing.max_upscale,
+            max_megapixels=config.sourcing.max_image_megapixels,
         )
         self.pageviews = PageviewsClient(self.session)
         self.alive = AliveChecker(self.session)
