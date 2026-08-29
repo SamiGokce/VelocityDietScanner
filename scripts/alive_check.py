@@ -36,8 +36,16 @@ LIVING_CATEGORY = "category:living people"
 DEATHS_CATEGORY = re.compile(r"^category:\d{3,4}s?\s+deaths$")
 DISAPPEARED = re.compile(r"^category:(missing|disappeared) people$")
 
-# "John Smith was an American actor" / "... was a Turkish footballer".
-PAST_TENSE = re.compile(r"\bwas (?:an?|the)\b", re.IGNORECASE)
+# The opening biographical clause is the only place tense means anything.
+# "Kobe Bean Bryant WAS an American professional basketball player" -> dead.
+# "Andy Roddick IS an American former professional tennis player" -> alive,
+# even though the next sentence says "He was ranked world No. 1", and
+# "she started her career when she was a child" is not an obituary either.
+# So: find whichever copula comes first and read that one.
+# Requiring an article after the verb is too narrow -- "Elizabeth II was Queen
+# of the United Kingdom" has none. Wikipedia leads always open "NAME is/was ...",
+# so the first copula in the extract is the one that matters.
+LEAD_COPULA = re.compile(r"\b(is|was)\b", re.IGNORECASE)
 
 
 @dataclass
@@ -89,10 +97,12 @@ class AliveChecker:
         # Belt and braces: a living-people article whose lead is in the past
         # tense usually means the category has not caught up with the news yet.
         summary = self._summary(wikipedia_title)
-        if summary and PAST_TENSE.search(summary):
+        lead = LEAD_COPULA.search(summary or "")
+        if lead and lead.group(1).lower() == "was":
             return AliveResult(
                 ALIVE_MISMATCH,
-                f"lead reads past tense while categorised as living: {summary[:160]!r}",
+                f"lead describes them in the past tense while categorised as "
+                f"living: {summary[:160]!r}",
             )
         return AliveResult(ALIVE_YES, "en.wikipedia: Category:Living people, present tense lead")
 

@@ -4,6 +4,8 @@ The rule is deliberately conservative -- anything short of a positive
 "Category:Living people, present-tense lead" is withheld for a human.
 """
 
+import pytest
+
 from common.db import ALIVE_MISMATCH, ALIVE_UNVERIFIED, ALIVE_YES
 from scripts.alive_check import AliveChecker
 
@@ -70,3 +72,36 @@ def test_present_tense_lead_is_not_confused_by_a_was_elsewhere():
     result = check(["Category:Living people"],
                    extract="Jane Doe is a director. Her first film premiered in 2001.")
     assert result.status == ALIVE_YES
+
+
+# --- real false positives this heuristic used to produce --------------------
+
+@pytest.mark.parametrize("extract", [
+    # Retired athletes: "former" plus a career described in the past tense.
+    "Andrew Stephen Roddick is an American former professional tennis player. "
+    "He was ranked as the world No. 1 in men's singles by the ATP.",
+    "Timothy Henry Henman is a British former professional tennis player. "
+    "He was ranked world No. 4 in men's singles.",
+    # A living actor whose childhood is, necessarily, in the past tense.
+    "Naomie Melanie Harris is a British actress. She started her career when "
+    "she was a child, appearing in the television series Simon and the Witch.",
+    # Past-tense achievements are not obituaries.
+    "Michael Keaton is an American actor. He was nominated for an Academy Award.",
+])
+def test_a_living_person_with_a_past_tense_career_is_not_flagged(extract):
+    """These three were all wrongly flagged on a real run.
+
+    The lead opens "is a ...", which is the only tense that means anything;
+    everything after it describes things that already happened.
+    """
+    assert check(["Category:Living people"], extract=extract).status == ALIVE_YES
+
+
+@pytest.mark.parametrize("extract", [
+    "Kobe Bean Bryant was an American professional basketball player.",
+    "Matthew Perry was a Canadian-American actor best known for Friends.",
+    # No article after the verb -- the earlier pattern missed this entirely.
+    "Elizabeth II was Queen of the United Kingdom and other Commonwealth realms.",
+])
+def test_a_lead_in_the_past_tense_is_still_caught(extract):
+    assert check(["Category:Living people"], extract=extract).status == ALIVE_MISMATCH
