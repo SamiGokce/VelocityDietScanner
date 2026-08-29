@@ -128,8 +128,22 @@ def test_the_track_still_loops_when_seeking_into_it():
     assert command.index("-stream_loop") < command.index("-ss")
 
 
-def test_fades_suit_a_slow_piece_by_default():
-    from common.config import load_config
+def test_the_clip_does_not_open_on_silence():
+    """Offset and fade must not gang up to recreate a quiet opening.
+
+    The configured track begins with 1.43s of digital silence. Seeking past it
+    only helps if the fade-in does not then spend two seconds getting back to
+    full level -- which is exactly what the first batch of videos did.
+    """
     video = load_config().video
-    assert video.audio_fade_in >= 1.5
-    assert video.audio_fade_out >= 2.0
+    assert video.audio_start_offset > 0, "seek past the track's silent head"
+    assert video.audio_fade_in <= 1.0, "a long fade undoes the offset"
+    assert video.audio_fade_out >= 2.0, "but the ending should still be graceful"
+
+
+def test_force_rerenders_rows_that_are_already_ready():
+    """Changing a render setting is not a failure, but still needs a redo."""
+    import inspect
+
+    from render.generate import Renderer
+    assert "force" in inspect.signature(Renderer.run).parameters

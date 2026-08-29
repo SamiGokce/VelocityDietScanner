@@ -189,8 +189,15 @@ class Renderer:
 
     # -- the batch ----------------------------------------------------------
     def run(self, start: str | None, end: str | None, limit: int | None,
-            retry_failed: bool) -> tuple[int, int]:
-        statuses = (GRAPHIC_PENDING, GRAPHIC_FAILED) if retry_failed else (GRAPHIC_PENDING,)
+            retry_failed: bool, force: bool = False) -> tuple[int, int]:
+        if force:
+            # Re-render work that is already Ready, for when a render setting
+            # changed rather than a row failing.
+            statuses = (GRAPHIC_PENDING, GRAPHIC_FAILED, GRAPHIC_READY)
+        elif retry_failed:
+            statuses = (GRAPHIC_PENDING, GRAPHIC_FAILED)
+        else:
+            statuses = (GRAPHIC_PENDING,)
         done = failed = 0
         with Database(self.cfg.paths.database) as db:
             rows = db.pending_renders(start=start, end=end, statuses=statuses, limit=limit)
@@ -213,6 +220,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-video", action="store_true", help="stills only, no MP4/audio")
     p.add_argument("--video", action="store_true", help="force video even if disabled in config")
     p.add_argument("--retry-failed", action="store_true", help="also retry rows marked Failed")
+    p.add_argument("--force", action="store_true",
+                   help="re-render rows already marked Ready -- use after changing a "
+                        "render or audio setting, when nothing actually failed")
     p.add_argument("-v", "--verbose", action="store_true")
     return p
 
@@ -236,7 +246,7 @@ def main(argv: list[str] | None = None) -> int:
 
     make_video = True if args.video else (False if args.no_video else None)
     renderer = Renderer(cfg, make_video=make_video)
-    done, failed = renderer.run(start, end, args.limit, args.retry_failed)
+    done, failed = renderer.run(start, end, args.limit, args.retry_failed, args.force)
     log.info("rendered %d, failed %d", done, failed)
     if failed:
         log.info("failures are in %s and in the notes column", cfg.paths.review_log)

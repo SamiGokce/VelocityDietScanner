@@ -109,12 +109,15 @@ video:
   # Slow, quiet, cinematic pieces need both of these.
   # Seek into the track so a 16s clip lands on the part that carries the piece,
   # not the near-silent intro these recordings usually open with.
-  audio_start_offset: 0.0
+  # This track opens with 1.43s of digital silence before the first note.
+  audio_start_offset: 1.45
   # Normalise loudness towards YouTube's own playback target. A soft piano
   # recording can sit 12dB under a pop master, which on a phone speaker is the
   # difference between audible and not. Leave empty to disable.
   audio_loudness_lufs: -14
-  audio_fade_in: 2.0
+  # Short: the offset already lands on the first note, and a long fade on top
+  # of it would recreate the quiet opening the offset just removed.
+  audio_fade_in: 0.4
   audio_fade_out: 3.0
 
 youtube:
